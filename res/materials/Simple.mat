@@ -1,0 +1,4 @@
+shader SimpleSprite
+uniform uTint (Vector4 0.0 0.0 0.0 0.0)
+uniform uTintWeight 0.0
+attribute aVertexPosition quad
