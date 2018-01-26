@@ -215,7 +215,7 @@ render r dt drawables = do
   blendFunc $= (SrcAlpha,OneMinusSrcAlpha)
   r' <-(\ r -> return $ r & delta .~ dt) =<<(foldM (\r (DO o)->setup r o) r drawables)
   let (Transform centr dim o) = r'^.viewport.trans
-      mat = convertTransform (Transform (-centr) dim (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Float)
+      mat = convertTransform (Transform (-centr) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Float)
   proj <- toGlmatrix $ mat
   let r'' = r' & projection .~ Just proj
   -- gets all the resources doing loading if necessary and puts the identifier into a list
@@ -262,7 +262,7 @@ listToBuffer components usage ih typ lst = do
 newRenderer w h = do
   buffers <- mapM (\(n,lst)-> (listToBuffer 4 StaticDraw ToFloat Float lst) >>= (return . (n,))) geometryBuffers
   return $ Renderer
-             (OBB $ Transform (pure 0) (V2 (1/w) (1/h)) 0)
+             (OBB $ Transform (pure 0) (V2 w h) 0)
              0
              Nothing
              Map.empty

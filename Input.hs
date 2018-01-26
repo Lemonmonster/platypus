@@ -66,7 +66,7 @@ instance EntityW '[Window,Renderer.Renderer,SDL.Event] '[] Mouse '[] where
      (V2 w h) <- get $ windowSize (head l)
      (P (V2 x y)) <- getAbsoluteMouseLocation
      let weighted = (V2 (fromIntegral x/fromIntegral w) (fromIntegral y/fromIntegral h) ) - 0.5
-         out = weighted `fillMul` (convertTransform $ (r^.Renderer.viewport.trans & Geometry.scale %~ (1/)))
+         out = weighted `fillMul` (convertTransform $ (r^.Renderer.viewport.trans))
      f <- getMouseButtons
      return $ Right [Input.Mouse f (out * V2 1 (-1))]
 
