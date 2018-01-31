@@ -52,7 +52,7 @@ geometryBuffers =
    ("line",[0,0,0,1,1,1,0,1]),
    ("circle",concatMap ((\(V4 x y z w)-> [x,y,z,w]).
     (\i-> (convertTransform (Transform (pure 0) (pure 1) (2*pi*i/circleVerts)):: M44 Float )!* (V4 0.5 0 0 1) ))
-      [0..circleVerts-1])
+      [0..circleVerts - 1])  
   ]
 --classes for common graphics elements
 class Named a where

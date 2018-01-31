@@ -61,8 +61,8 @@ executable Platypus
   build-depends:       base >=4.9 && <4.10,regex-compat, netwire, lens, void, template-haskell, containers,mtl,sdl2,OpenGL,linear,JuicyPixels,regex-pcre,vector,split,directory,sdl2-ttf
 
   -- Directories containing source files.
-  -- hs-source-dirs:
+  hs-source-dirs: src
 
   -- Base language which the package is written in.
   default-language:    Haskell2010
-  default-extensions: DataKinds, TypeOperators, KindSignatures, MultiParamTypeClasses
+  default-extensions: DataKinds, TypeOperators, KindSignatures, MultiParamTypeClasses, TupleSections, Arrows, FlexibleInstances
