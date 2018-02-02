@@ -64,11 +64,11 @@ instance Resource ShaderProgram where
         shaderSourceBS fs $= packUtf8 frags
         compileShader fs
         shaderInfoLog fs >>= (\s -> case s of
-          []  -> do
+          _  -> do
             shaderSourceBS vs $= packUtf8 verts
             compileShader vs
             shaderInfoLog vs >>= (\s -> case s of
-              [] -> do
+              _ -> do
                 attachShader p fs
                 attachShader p vs
                 linkProgram p
@@ -77,7 +77,7 @@ instance Resource ShaderProgram where
                      umap <- return . Map.fromList =<< mapM (\s-> GL.get (uniformLocation p s) >>= (\v -> return (s,v)))  uniformNames
                      amap <- return . Map.fromList =<< mapM (\s-> GL.get (attribLocation p s) >>= (\v -> return (s,v)))  attributeNames
                      errors >>= (\es -> case es of
-                       [] ->
+                       _ ->
                         let progrm = Program name p amap umap
                         in return (progrm,r & shaders . at name .~ Just progrm)
                        _  -> error (show es)
