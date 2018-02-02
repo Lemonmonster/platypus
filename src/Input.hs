@@ -22,6 +22,8 @@ import System.IO.Unsafe
 import Renderer hiding (get)
 import Geometry
 import Debug.Trace
+import Data.Function (fix)
+import Data.Maybe (fromMaybe)
 
 data Mouse = Mouse{_pressed::MouseButton -> Bool,_position::V2 Float}
 makeLenses ''Mouse
@@ -48,8 +50,8 @@ instance EntityW '[Delayed (Window,GLContext)] '[Quit] (Window,GLContext) '[] wh
                                               windowHighDPI = True,
                                               windowOpenGL = Just defaultOpenGL}
         gl <- glCreateContext window
-        clearColor $= Color4 0 0 0 1
-        swapInterval $= SynchronizedUpdates
+        clearColor $= Color4 0.4 0.4 0.4 1
+        swapInterval $= ImmediateUpdates
         return $ Right ([(window,gl)],SNil)
       D x :_ -> do
         --print q
@@ -66,13 +68,17 @@ instance EntityW '[(Window,GLContext)] '[]  GLContext '[] where
   wire =  first ( arr (map snd . headE))
 
 instance EntityW '[Window,Renderer.Renderer,SDL.Event] '[] Mouse '[] where
-  wire =   first $ mkGen_ $ \(l `ECons` [r] `ECons` e `ECons` ENil)->  do
+  wire =   first $ mkGen $ fix (\ f m s (l `ECons` [r] `ECons` e `ECons` ENil) ->  do
      (V2 w h) <- get $ windowSize (head l)
      (P (V2 x y)) <- getAbsoluteMouseLocation
      let weighted = (V2 (fromIntegral x/fromIntegral w) (fromIntegral y/fromIntegral h) ) - 0.5
          out = weighted `fillMul` (convertTransform $ (r^.Renderer.viewport.trans))
-     f <- getMouseButtons
-     return $ Right [Input.Mouse f (out * V2 1 (-1))]
+     let m' = foldl (\m e -> case e of
+            Event _ (MouseButtonEvent (MouseButtonEventData _ state _ b _ _)) ->
+              M.insert b (state == Pressed) m
+            _ -> m
+           ) m e
+     return $ (Right [Input.Mouse (fromMaybe False.(`M.lookup` m') ) (out * V2 1 (-1))],mkGen $ f m')) M.empty
 
 
 instance EntityW '[Window] '[] WindowSize '[] where
@@ -87,6 +93,7 @@ instance EntityW '[Window,SDL.Event] '[] Keyboard '[] where
 
 instance EntityW '[(Window,GLContext)] '[] SDL.Event '[Quit] where
   wire =mkGen_ $ \(_ `ECons` ENil,SNil) ->  do
+      SDL.pumpEvents
       events <- pollEvents
       let isQuit (Event _ QuitEvent) = True
           isQuit _ = False

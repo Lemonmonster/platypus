@@ -58,6 +58,6 @@ instance EntityW '[Renderer] '[] Framerate '[DrawableObject] where
     f1 <- lowestOver 1 . (0 >--framerate) -< ()
     f2 <-  hold <<< periodic 0.05 <<<(0 >--framerate) -< ()
     let d = V2 20 60
-        p = V2 (-280) (-160)
+        p = V2 (-280) (-100)
         sigFig x = fromIntegral (round $ x*100) / 100
     returnA -< ([Framerate f2],[Signal Nothing (DO $ textBox (show (sigFig f1) ++ " " ++show (sigFig f2) ) defaultFont (newOBB p d))] `SCons` SNil)

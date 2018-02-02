@@ -295,14 +295,14 @@ mkObject create destroy =
               return (oId,newWire)
             ) (M.toList mp') ) (Right (mempty,mempty))
         let mp'' = M.fromList  wireUpdate
-        return (fmap (,fmap ((\(i,start,mp,news)-> switch (mkObject' i start mp news) . eventFilter) )
+        return (fmap (,fmap ((\(i,start,nextMap,news)-> switch (mkObject' i start nextMap news . eventFilter) ) )
                         (fmap (\(idCount,sig,adds,deletes) -> (
                                     idCount,
-                                    sig,
+                                    (<>) <$> sig <*> output,
                                     (mp'' `M.difference` deletes),
                                     adds
                                     )) $
-                        merge (\(idCount,addSig,adds,_) (_,deleteSig,_,deletes) -> (
+                        merge (\(idCount,addSig,adds,_) (_,deleteSig,_,deletes) ->  (
                                 idCount,
                                 (<>) <$> addSig <*> deleteSig,
                                 adds,

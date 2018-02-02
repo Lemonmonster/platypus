@@ -58,7 +58,7 @@ executable Platypus
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.9 && <4.10,regex-compat, netwire, lens, void, template-haskell, containers,mtl,sdl2,OpenGL,linear,JuicyPixels,regex-pcre,vector,split,directory,sdl2-ttf
+  build-depends:       base >=4.9 && <4.10,regex-compat, netwire, lens, void, template-haskell, containers,mtl,sdl2,OpenGL,linear,JuicyPixels,regex-pcre,vector,split,directory,sdl2-ttf,deepseq
 
   -- Directories containing source files.
   hs-source-dirs: src

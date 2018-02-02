@@ -18,7 +18,6 @@ import Control.Lens
 import Data.Typeable
 import Renderer hiding (obj)
 import Linear hiding (translation)
-import Data.Map
 import Data.Bool
 import Signals
 import Geometry
@@ -47,7 +46,7 @@ instance EntityW [DynamicGeom, M.Map (Maybe EntityId) (Event Collision)]
                  '[PhysObj,DrawableObject,(Create DynamicGeom),Destroy] where
     wire = mkObject (\proj -> proc (dyn `HCons` c `HCons` HNil,HNil) -> do
                 acc <- switch ( 0 &&& arr ( (pure $ V2 0 (-1000)) <$  )) -< c
-                dest <- Wires.at 2 -< (proj^?!ident)
+                dest <- Wires.at 10 -< (proj^?!ident)
                 returnA -< (Projectile $ dyn & dgPhys.mover.acceleration .~ acc,sigify [Dest dest] `SCons` SNil))
                     (const mempty)
                    >>> signal_ (Update . _dynGeo) >>> drawW >>> signal_ (_dgPhys._dynGeo)

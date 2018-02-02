@@ -31,6 +31,7 @@ import Prelude hiding ((.),id)
 import Geometry as G hiding (orientation)
 import Data.List
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as S
 import Control.Lens hiding (Empty)
 import Control.Monad.Writer.Lazy (tell)
 import Control.Applicative
@@ -38,9 +39,10 @@ import Data.Dynamic
 import Data.Maybe (mapMaybe,fromJust,isNothing,isJust)
 import Debug.Trace
 import Data.Function hiding ((.),id)
-import Wires
+import Wires hiding (at)
 import Entity
 import Data.Typeable
+import Data.Ord (comparing)
 import Renderer (Shaped,shape)
 import Control.Wire.Unsafe.Event -- yes we cheat a little here
 
@@ -226,7 +228,60 @@ doImpulse a@PhysObj{_mover=(Mover aa va pa ta ava oa _)}
   in  if _inertia a == (1/0) && _inertia b == (1/0) || (rvel `dot` n) >=  -0.00001 then
         (a,b)
       else
-        ((((doImpulse $! a) $! ra) $! 1),((((doImpulse $! b) $! rb) $! (-1))))
+        (doImpulse a ra 1,doImpulse  b rb (-1))
+
+doMoveOut :: Map.Map EntityId PhysObj -> [Collision] -> Map.Map EntityId PhysObj
+doMoveOut objs collisions =
+  let moveOut :: Map.Map EntityId (PhysObj,[V2 Float]) -> EntityId -> EntityId -> Manifold ->  Map.Map EntityId (PhysObj,[V2 Float])
+      moveOut mp a b m =
+        let (objA,vecsA) = mp^?!at a._Just
+            (objB,vecsB) = mp^?!at b._Just
+        in if _impulseFilter objA b && _impulseFilter objB a then
+            let translateP p v =
+                  (p & (mover . Physics.position) %~ (+v)) & (shape . G.position) %~ (+v)
+                totalInertia = _inertia objA + _inertia objB
+                cantMove s vs = any (>0) $ map (dot (transVec m ^* s)) vs
+                cantMoveA = cantMove 1 vecsA
+                cantMoveB = cantMove (-1) vecsB
+                doTranslate obj s thisCantMove otherCantMove =
+                  let dv = transVec m ^* ( s * offset m)
+                  in  translateP obj (dv ^* (
+                                  if totalInertia == 1/0 then
+                                    if _inertia obj == (1/0)
+                                      then 0
+                                      else 1
+                                  else
+                                        _inertia obj/totalInertia
+                                    ))
+            in (Map.insert b (doTranslate objB (-1) cantMoveB cantMoveA,(transVec m ^* (-1)) : vecsB)
+                  (Map.insert a (doTranslate objA 1 cantMoveA cantMoveB,transVec m : vecsA) mp))
+          else mp
+      --build graph of collisions
+      graph = Map.fromList $ map (\((x,a):xs)-> (x , a : map snd xs)) $
+          groupBy (((==EQ).).comparing fst) $ sortBy (comparing fst) $
+          concatMap (\c@(Collision a b m)->[(a,(b,c)),(b,(a,c))]) collisions
+      --propogate out from the objects with the highest inertia
+      evalOrder = map (map (^?!ident)) $ groupBy (((==EQ).).comparing _inertia) $ sortBy (comparing _inertia)
+                    $ map (fromJust.(`Map.lookup` objs).fst) $ Map.toList graph
+      mpOut =  fix (\f (mp,open,closed,lst) ->
+          let (mp',open',closed') = foldl' (\(mp,open',closed') x ->
+                    let (mp',newOpens) = foldl' (\(mp,currOpens) (y,Collision a b m) ->
+                            let modMap = moveOut mp a b m
+                            in (modMap,if S.member y closed' then currOpens else y:currOpens)
+                          ) (mp,[]) (filter (not.(`S.member` closed').fst) $ graph^?!at x._Just)
+                    in (mp',newOpens++open',S.insert x closed')
+                ) (mp,[],closed) open
+          in if null open' then
+                if null lst then
+                  Map.map fst mp'
+                else
+                  f (mp',head lst,closed',tail lst)
+             else
+               f (mp',open',closed',lst)
+        ) (Map.map (,[]) objs,[],S.empty,evalOrder)
+    in mpOut
+
+
 
 data PhysSim = Sim {
   movers:: Map.Map (TypeRep,Int) Mover,
@@ -239,44 +294,33 @@ instance HasId PhysSim
 instance EntityW '[] '[Mover,PhysObj] PhysSim '[] where
   wire = mkPure $ \ds (_,newMovers `SCons`newObjects `SCons` SNil)  ->
     let dt = realToFrac $ dtime ds
-        n = 20
+        n = 10
         m' =  Map.map (doMove dt) (foldl' (\m x -> Map.insert (x^?!ident) x m ) Map.empty (map _payload newMovers) )
-        o' =  Map.map (doMoveP dt) (foldl' (\o x -> Map.insert (x^?!mover.ident) x o ) Map.empty (map _payload newObjects) )
-        events = toEvents $ buildTree $ map (\p->(p,toBound $ _shape p)) $ Map.elems o'
-        {-events =  fix (\f list out-> if null list then out else let h = head list in
-                      f (tail list) $
-                        foldl' (\outl (a,b,m)-> if isJust m then CollisionEvent (a^.mover.ident) (b^.mover.ident) (fromJust m) : outl else outl) out $
-                          foldl' (\clist x-> if bound (x^.shape) (h^.shape) then (x,h, collision (x^.shape) (h^.shape) ): clist else clist) [] (tail list) ) (Map.elems o') []-}
-        (o''',_) = fix (\f (o'',n')->
-                          if n'>0 then
-                            f $! (foldl' (\mp (Collision a b m) ->
-                            let pa = o'' Map.! a
-                                pb = o'' Map.! b
-                            in
-                              if _impulseFilter pa b && _impulseFilter pb a then
-                                  let look o = fromJust . Map.lookup ( _mident $ _mover o)
-                                      (pa', pb') = doImpulse (look pa mp) (look pb mp) m (1/n)
-                                  in (Map.insert b pb' (Map.insert a pa' mp))
-                                else mp
-                            ) o'' events , n'-1)
-                          else (foldl' (\mp (Collision a b m) ->
-                          let pa = o'' Map.! a
-                              pb = o'' Map.! b
-                          in
-                            if _impulseFilter pa b && _impulseFilter pb a then
-                                let look o = fromJust . Map.lookup ( _mident $ _mover o)
-                                    translateP p v =
-                                      (p & (mover . Physics.position) %~ (+v)) & (shape . G.position) %~ (+v)
-                                    (pao,pbo) = (look pa mp,look pb mp)
-                                    ms = _inertia pao + _inertia pbo
-                                    doTranslate o s =
-                                      translateP o
-                                                (transVec m ^* ( s* offset m * (if ms == 1/0 then (if _inertia o == (1/0) then 0 else 1) else  _inertia o/ms )))
-                                in (Map.insert b (doTranslate (look pb mp) (-1)) (Map.insert a (doTranslate (look pa mp) 1) mp))
-                              else mp
-                          ) o'' events,0)) (o',n)
-        lst =  Map.elems o'''
-    in  (Wires.Right ([Sim m' o''' (Map.fromList $ concatMap (\c@(Collision a b m) -> [(a,c),(b,c)]) events)],SNil),wire)
+        o = foldl' (\o x -> Map.insert (x^?!mover.ident) x o ) Map.empty (map _payload newObjects)
+        doSim reps (o,e) =
+          let o' =  Map.map (doMoveP (dt/reps)) o
+              events = toEvents $ buildTree $ map (\p->(p,toBound $ _shape p)) $ Map.elems o'
+            {-events =  fix (\f list out-> if null list then out else let h = head list in
+                          f (tail list) $
+                            foldl' (\outl (a,b,m)-> if isJust m then CollisionEvent (a^.mover.ident) (b^.mover.ident) (fromJust m) : outl else outl) out $
+                              foldl' (\clist x-> if bound (x^.shape) (h^.shape) then (x,h, collision (x^.shape) (h^.shape) ): clist else clist) [] (tail list) ) (Map.elems o') []-}
+              o''' = iterate (\ o''->
+                                  foldl' (\mp (Collision a b m) ->
+                                  let pa = o'' Map.! a
+                                      pb = o'' Map.! b
+                                  in
+                                    if _impulseFilter pa b && _impulseFilter pb a then
+                                        let look o = fromJust . Map.lookup ( _mident $ _mover o)
+                                            (pa', pb') = doImpulse (look pa mp) (look pb mp) m (1/n)
+                                        in (Map.insert b pb' (Map.insert a pa' mp))
+                                      else mp
+                                  ) o'' events
+                                ) o' !! floor n
+              o'''' = doMoveOut o''' events
+              lst =  Map.elems o''''
+          in (o'''',Map.union (Map.fromList $ concatMap (\c@(Collision a b m) -> [(a,c),(b,c)]) events) e)
+        (objects,events) = iterate (doSim 5) (o,Map.empty) !! 5
+    in  (Wires.Right ([Sim m' objects events],SNil),wire)
 
 
 instance EntityW '[PhysSim] '[] (Map.Map EntityId Mover) '[] where

@@ -46,11 +46,12 @@ data Clicker = Clicker
 
 instance EntityW '[Mouse] '[] Clicker '[Create DynamicGeom] where
   wire =
-    let createVals p i =
+    let createVals s p i =
           let setPhysProps p = p{_aInertia=300000,_inertia=100} & mover.acceleration .~ (V2 0 -1000)
-          in  DynGeo (dynamicGeom,i) (setPhysProps $ newPhysObj (dynamicGeom,i) (newOBB p 50)) 1
+          in  DynGeo i (setPhysProps $ newPhysObj i (s p 50)) 1
     in proc ([Input.Mouse f p] `ECons` ENil,_) -> do
-        e <- alternate never (periodic 0.2) <<< (id &&& edge id) <<< arr ($ ButtonMiddle) -< f
-        i <- accum1E (+) -< 1 <$ e
-        let out = fmap (createVals p) i
-        returnA -< ([Clicker],sigify [Create out] `SCons` SNil)
+        e1 <- alternate never (periodic 0.2) <<< (id &&& edge id) <<< arr ($ ButtonRight) -< f
+        e2 <- alternate never (periodic 0.2) <<< (id &&& edge id) <<< arr ($ ButtonLeft) -< f
+        let out1 = ((createVals newCircle p) <$ e1)
+        let out2 = ((createVals newOBB p) <$ e2)
+        returnA -< ([Clicker],sigify [CNoId out1,CNoId out2] `SCons` SNil)
