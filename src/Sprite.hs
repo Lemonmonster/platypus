@@ -1,6 +1,6 @@
-{-#LANGUAGE TemplateHaskell#-}
-{-#LANGUAGE Arrows#-}
-{-#LANGUAGE TupleSections#-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE Arrows #-}
+{-# LANGUAGE TupleSections #-}
 module Sprite where
 
 import Renderer
@@ -25,6 +25,7 @@ import Data.Bool
 import Prelude hiding ((.),id)
 import Control.Wire hiding (at)
 import Debug.Trace
+import Structures
 
 
 type Color = V4 Float
@@ -65,30 +66,39 @@ instance Shaped Sprite where
 instance Tinted Sprite where
   color = tint
 
+instance ZIndexed Sprite where
+  zIndex = ssz
+
+instance Poseable Sprite where
+  pos = shape.Geometry.position
+  angle = shape.orient
 
 instance Drawable Sprite where
-  zIndex = ssz
-  resources sprite =
-    [RO (get (sprite^.atlas) :: Getter Atlas)]
-  draw r sprite = do
-    atlas <- fst <$> get (sprite^.atlas) r ::  IO Atlas
-    let (VB buffer (ih,VertexArrayDescriptor c d s p)) = atlas^.coords
-        prog = atlas^.aMaterial.program
-        (V4 r g b a ) = sprite^.tint
-        anims = sprite^.animation :: String
-        (Just animationObj) = atlas^.animations.at anims
-        fram = sprite^.frame `rem` V.length (animationObj^.frames)
-        indx = animationObj ^?! frames.ix fram
-    setUniform prog "uTintWeight" $ sprite^.tintWeight
-    setUniform prog "uTint" $ Vector4 r g b a
-    setUniform prog "uMVMatrix" =<< toGlmatrix ((convertTransform $ sprite^.shape.trans :: M44 Float)& _z._w.~fromIntegral (sprite^.zIndex))
-    maybe (return ()) (\attrib -> do
-        bindBuffer ArrayBuffer $= Just buffer
-        vertexAttribPointer attrib $= (ih,VertexArrayDescriptor c d s (plusPtr (nullPtr:: Ptr Word8) (8*4*fram)))
-      )  (prog^.attributes.at "aTexCoord")
-    drawArrays Quads 0 4
+  toDrawableObject sprite = DrawableObject {
+    z = sprite^.ssz,
+    resources  =
+      [RO (get (sprite^.atlas) :: Getter Atlas)],
+    setup = return,
+    draw  = \r -> do
+      atlas <- fst <$> get (sprite^.atlas) r ::  IO Atlas
+      let (VB buffer (ih,VertexArrayDescriptor c d s p)) = atlas^.coords
+          prog = atlas^.aMaterial.program
+          (V4 r g b a ) = sprite^.tint
+          anims = sprite^.animation :: String
+          (Just animationObj) = atlas^.animations.at anims
+          fram = sprite^.frame `rem` V.length (animationObj^.frames)
+          indx = animationObj ^?! frames.ix fram
+      setUniform prog "uTintWeight" $ sprite^.tintWeight
+      setUniform prog "uTint" $ Vector4 r g b a
+      setUniform prog "uMVMatrix" =<< toGlmatrix ((convertTransform $ sprite^.shape.trans :: M44 Double)& _z._w.~fromIntegral (sprite^.zIndex))
+      maybe (return ()) (\attrib -> do
+          bindBuffer ArrayBuffer $= Just buffer
+          vertexAttribPointer attrib $= (ih,VertexArrayDescriptor c d s (plusPtr (nullPtr:: Ptr Word8) (8*4*fram)))
+        )  (prog^.attributes.at "aTexCoord")
+      drawArrays Quads 0 4
+  }
 
-sprite :: V2 Float -> V2 Float -> String -> String -> Sprite
+sprite :: V2 Double -> V2 Double -> String -> String -> Sprite
 sprite pos dim animation atlas =
   Sprite (OBB $ Transform pos dim 0)
           animation

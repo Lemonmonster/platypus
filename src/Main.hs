@@ -33,5 +33,5 @@ main = do
 
 mainLoop w s = do
   (ds,s') <- stepSession s
-  (_,w') <- stepWire w ds (Right ())
-  mainLoop w' s'
+  (v,w') <- stepWire w ds (Right ())
+  w `seq` v `seq` mainLoop w' s'

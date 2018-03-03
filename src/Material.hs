@@ -1,6 +1,6 @@
-{-#LANGUAGE ExistentialQuantification#-}
-{-#LANGUAGE DataKinds#-}
-{-#LANGUAGE MultiWayIf#-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE MultiWayIf #-}
 module Material where
 
 import Renderer

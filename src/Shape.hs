@@ -1,4 +1,4 @@
-{-#LANGUAGE TemplateHaskell#-}
+{-# LANGUAGE TemplateHaskell #-}
 module Shape where
 
 import Renderer
@@ -38,53 +38,58 @@ instance Shaped Shape where
 instance Materialed Shape where
   material = sMaterial
 
-instance Drawable Shape where
+instance ZIndexed Shape where
   zIndex = sz
-  setup r s =
-    if Map.member geoBufferName (r^.globalArrays)  then
-      return r
-    else do
-      buffer <- genObjectName :: IO BufferObject
-      return $ r & globalArrays.at geoBufferName._Just.~ VB buffer (ToFloat,VertexArrayDescriptor 4 Float 0 nullPtr)
-  resources s =
-    [RO (get (s^.material) :: Getter Material)]
-  draw r s = do
-    (mat,_) <- get (s^.material) r
-    let prog = mat^.program
-        bindArray nm = do
-          let (VB buffer desc) = r^?!globalArrays.at nm._Just
+
+instance Drawable Shape where
+  toDrawableObject s = DrawableObject {
+    z= s^.zIndex,
+    setup = \r ->
+      if Map.member geoBufferName (r^.globalArrays)  then
+        return r
+      else do
+        buffer <- genObjectName :: IO BufferObject
+        return $ r & globalArrays.at geoBufferName._Just.~ VB buffer (ToFloat,VertexArrayDescriptor 4 Float 0 nullPtr),
+    resources =
+      [RO (get (s^.material) :: Getter Material)],
+    draw  = \r -> do
+      (mat,_) <- get (s^.material) r
+      let prog = mat^.program
+          bindArray nm = do
+            let (VB buffer desc) = r^?!globalArrays.at nm._Just
+            maybe (return ()) (\attrib -> do
+                bindBuffer ArrayBuffer $= Just buffer
+                vertexAttribPointer attrib $= desc
+              )  (prog^.attributes.at "aVertexPosition")
+      setUniform prog "uTint" ((\(V4 r g b a) -> Vector4 r g b a) $ s^.color)
+      mmat <- toGlmatrix ((convertTransform (s^.shape.trans) :: V4 (V4 Double)) & _z._w.~ fromIntegral (s^.zIndex))
+      setUniform prog "uMVMatrix" mmat
+      case s^.shape of
+        (Line t) -> do
+          bindArray "line"
+          drawArrays Lines 0 2
+        (Circle t) -> do
+          bindArray "circle"
+          drawArrays GL.Polygon 0 $ floor circleVerts
+        (OBB t) -> do
+          bindArray "quad"
+          drawArrays Quads 0 4
+        (Box p d) -> do
+          bindArray "quad"
+          drawArrays Quads 0 4
+        (Geometry.Polygon t ps) -> do
+          let (VB buffer desc) = r^?!globalArrays.at geoBufferName._Just
+              lst = concatMap (\(V2 x y) -> [x,y,0,1]) ps
           maybe (return ()) (\attrib -> do
+              array <- newArray lst
               bindBuffer ArrayBuffer $= Just buffer
+              bufferData ArrayBuffer $= (fromIntegral $ length lst * sizeOf (head lst),array,DynamicDraw)
               vertexAttribPointer attrib $= desc
-            )  (prog^.attributes.at "aVertexPosition")
-    setUniform prog "uTint" ((\(V4 r g b a) -> Vector4 r g b a) $ s^.color)
-    mmat <- toGlmatrix ((convertTransform (s^.shape.trans) :: V4 (V4 Float)) & _z._w.~ fromIntegral (s^.zIndex))
-    setUniform prog "uMVMatrix" mmat
-    (case s^.shape of
-      (Line t) -> do
-        bindArray "line"
-        drawArrays Lines 0 2
-      (Circle t) -> do
-        bindArray "circle"
-        drawArrays GL.Polygon 0 $ floor circleVerts
-      (OBB t) -> do
-        bindArray "quad"
-        drawArrays Quads 0 4
-      (Box p d) -> do
-        bindArray "quad"
-        drawArrays Quads 0 4
-      (Geometry.Polygon t ps) -> do
-        let (VB buffer desc) = r^?!globalArrays.at geoBufferName._Just
-            lst = concatMap (\(V2 x y) -> [x,y,0,1]) ps
-        maybe (return ()) (\attrib -> do
-            array <- newArray lst
-            bindBuffer ArrayBuffer $= Just buffer
-            bufferData ArrayBuffer $= (fromIntegral $ length lst * sizeOf (head lst),array,DynamicDraw)
-            vertexAttribPointer attrib $= desc
-            free array
-            drawArrays GL.Polygon 0 (fromIntegral $ length ps)
-          ) (prog^.attributes.at "aPosition")
-      )
+              free array
+              drawArrays GL.Polygon 0 (fromIntegral $ length ps)
+            ) (prog^.attributes.at "aPosition")
+
+      }
 
 
 --instance Drawable Shape where

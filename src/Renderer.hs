@@ -1,8 +1,8 @@
-{-#LANGUAGE ExistentialQuantification#-}
-{-#LANGUAGE DataKinds#-}
-{-#LANGUAGE TemplateHaskell#-}
-{-#LANGUAGE MultiWayIf#-}
-{-#LANGUAGE TupleSections#-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE TupleSections #-}
 module Renderer where
 
 import Graphics.Rendering.OpenGL hiding (Color,Texture,get,viewport)
@@ -36,6 +36,7 @@ import Foreign.Marshal.Array
 import Foreign.Marshal.Alloc
 import Foreign.Storable
 import Debug.Trace
+import GHC.Float
 
 shaderPath = "res/shaders/"
 materialPath = "res/materials/"
@@ -51,8 +52,8 @@ geometryBuffers :: [(String,[GLfloat])]
 geometryBuffers =
   [("quad",[-0.5,-0.5,0,1,0.5,-0.5,0,1,0.5,0.5,0,1,-0.5,0.5,0,1]),
    ("line",[0,0,0,1,1,1,0,1]),
-   ("circle",concatMap ((\(V4 x y z w)-> [x,y,z,w]).
-    (\i-> (convertTransform (Transform (pure 0) (pure 1) (2*pi*i/circleVerts)):: M44 Float )!* (V4 0.5 0 0 1) ))
+   ("circle",concatMap (map double2Float.(\(V4 x y z w)-> [x,y,z,w]).
+    (\i-> (convertTransform (Transform (pure 0) (pure 1) (2*pi*i/circleVerts)):: M44 Double )!* (V4 0.5 0 0 1) ))
       [0..circleVerts-1])
   ]
 --classes for common graphics elements
@@ -67,6 +68,9 @@ class Tinted a where
 
 class Materialed a where
   material :: Lens' a String
+
+class ZIndexed a where
+  zIndex :: Lens' a Int
 
 data Texture = Texture{_tName::String,_obj::TextureObject} deriving (Eq,Ord,Show)
 makeLenses ''Texture
@@ -167,6 +171,9 @@ data Path =  Path [V2 Float] Color-}
 type Getter a = (Renderer -> IO (a,Renderer))
 data ResourceObject = forall a. (Resource a) => RO (Getter a)
 
+instance Show ResourceObject where
+  show = const "ResourceObject"
+
 class Resource a where
   identifier :: a -> (String,String) -- type and id
   get  :: String -> Renderer -> IO (a,Renderer)
@@ -179,22 +186,26 @@ class Resource a where
   unload :: a -> IO ()
   unload = const $ return ()
 
---minimal complete implementations does nothing
-class Drawable a where
-  setup :: Renderer -> a -> IO Renderer -- for seting up global uniforms and attributeNames
-  setup r a= return r
-  resources :: a -> [ResourceObject]
-  resources = const []
-  draw :: Renderer -> a -> IO ()
-  draw = const $ const $ return ()
-  zIndex :: Lens' a Int
 
-toGlmatrix :: (Foldable t) => t (t Float) -> IO (GLmatrix Float)
-toGlmatrix = (newMatrix RowMajor) . concat . (foldr ((:).(foldr (:) [])) [])
+toGlmatrix :: (Foldable t) => t (t Double) -> IO (GLmatrix Float)
+toGlmatrix = (newMatrix RowMajor) . map double2Float . concat . (foldr ((:).(foldr (:) [])) [])
 
-data DrawableObject = forall a. (Drawable a,Show a) => DO a
+data DrawableObject = DrawableObject {
+  setup :: Renderer -> IO Renderer,
+  resources :: [ResourceObject],
+  draw :: Renderer -> IO (),
+  z :: Int
+}
+
 instance Show DrawableObject where
-  show (DO a) = "(DO "++ show a ++ ")"
+  show (DrawableObject _ r _ z) = "(ResourceObject <function> "++show r++" <function> "++show z++")"
+
+class Drawable a where
+  toDrawableObject :: a -> DrawableObject
+  toDrawableObject _ = DrawableObject return [] (const $ return ()) 0
+
+tdo :: (Drawable d) => d -> DrawableObject
+tdo = toDrawableObject
 
 orthoM44 left right top bottom near far =
   V4 (V4 (2/(right-left)) 0 0 ( - (right+left)/(right-left)))
@@ -214,10 +225,10 @@ render r dt drawables = do
   depthFunc $= Just Lequal
   blend $= Enabled
   blendFunc $= (SrcAlpha,OneMinusSrcAlpha)
-  r' <-(\ r -> return $ r & delta .~ dt) =<<(foldM (\r (DO o)->setup r o) r drawables)
+  r' <- (\ r -> return $ r & delta .~ dt) =<< foldM (flip setup) r drawables
   let (Transform centr dim o) = r'^.viewport.trans
-      mat = convertTransform (Transform (-centr) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Float)
-  proj <- toGlmatrix $ mat
+      mat = convertTransform (Transform (-centr) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Double)
+  proj <- toGlmatrix mat
   let r'' = r' & projection .~ Just proj
   -- gets all the resources doing loading if necessary and puts the identifier into a list
   (r''',drawablesWithRids) <- foldM (\(rout,lst) (d,ros)-> do
@@ -226,13 +237,13 @@ render r dt drawables = do
                 return (rin',identifier obj : idlst)
               ) (rout,[]) ros
             return (rout',(d,nub ids):lst)
-          ) (r'',[]) $ map (\d@(DO a)-> (d, resources a)) drawables
+          ) (r'',[]) $ map (\d-> (d, resources d)) drawables
   e <- errors
   unless (null e) (error ("opengl get error "++show e))
   let groupedDrawables =
-        map (map fst) $ concatMap (groupBy ((flip $ (==).snd).snd) . sortBy (comparing snd))
-          (groupBy (\(DO a,_) (DO b,_)-> a^.zIndex == b^.zIndex) $ sortBy (comparing (\(DO a,_)->a^.zIndex)) drawablesWithRids)
-  rfinal <-foldM (\r drawableSet@((DO a):_)-> do
+        map (map fst) $ concatMap (groupBy (flip ( (==).snd).snd) . sortBy (comparing snd))
+          (groupBy (\(a,_) (b,_)-> z a == z b) $ sortBy (comparing (\(d,_)->z d)) drawablesWithRids)
+  rfinal <-foldM (\r drawableSet@(a:_)-> do
     r' <- foldM (\r (RO getter) -> do
         (obj,r'') <- getter r
         bind r'' obj
@@ -240,7 +251,7 @@ render r dt drawables = do
       ) r (resources a)
     e <- errors
     unless (null e) (error ("opengl bind error "++show e))
-    mapM_ (\(DO o) ->draw r o) drawableSet
+    mapM_ (`draw` r) drawableSet
     e <- errors
     unless (null e) (error ("opengl draw error "++show e))
     return r'
@@ -261,7 +272,7 @@ listToBuffer components usage ih typ lst = do
   return (VB buffer (ih,VertexArrayDescriptor (fromIntegral components) typ 0 nullPtr))
 
 newRenderer w h = do
-  buffers <- mapM (\(n,lst)-> fmap (n,) $ listToBuffer 4 StaticDraw ToFloat Float lst) geometryBuffers
+  buffers <- mapM (\(n,lst)-> (n,) <$> listToBuffer 4 StaticDraw ToFloat Float lst) geometryBuffers
   return $ Renderer
              (OBB $ Transform (pure 0) (V2 w h) 0)
              0

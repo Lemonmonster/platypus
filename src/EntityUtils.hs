@@ -1,19 +1,28 @@
-{-#LANGUAGE MultiParamTypeClasses#-}
-{-#LANGUAGE FlexibleInstances#-}
-{-#LANGUAGE PolyKinds #-}
-{-#LANGUAGE TypeFamilies#-}
-{-#LANGUAGE UndecidableInstances#-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-#LANGUAGE ExplicitForAll#-}
+{-# LANGUAGE ExplicitForAll #-}
 --{-#LANGUAGE TemplateHaskell#-}
-{-#LANGUAGE DataKinds #-}
-{-#LANGUAGE TupleSections #-}
-{-#LANGUAGE Arrows #-}
-module EntityUtils (mkObject) where
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE Arrows #-}
+{-# LANGUAGE LambdaCase #-}
+{-# Language DefaultSignatures #-}
+{-# Language AllowAmbiguousTypes #-}
+{-# Language Strict #-}
+{-# Language StrictData #-}
+module EntityUtils (
+  mkObject,
+  Manager,
+  managedIds
+ ) where
 
 import Entity
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import Data.Typeable
 import Control.Lens hiding (Contains)
 import Signals
@@ -31,40 +40,11 @@ import Control.Wire.Unsafe.Event
 import Control.Monad (when)
 --recreates a lot of the functions from the HList package
 
-class SameLength' (es1 :: [k]) (es2 :: [m])
-instance (es2 ~ '[]) => SameLength' '[] es2
-instance (SameLength' xs ys, es2 ~ (y ': ys)) => SameLength' (x ': xs) es2
 
-class ApplyAB f a b where
-  applyAB :: f -> a -> b
-
-class HMap (r1 :: [*]-> *) (r2 :: [*]-> *) f (a::[*]) (b::[*]) where
-  hmap ::(SameLength' a b) => f -> r1 a -> r2 b
-
-instance ApplyAB (a -> b) a b where
-  applyAB = ($)
-
-instance HMap EntityL HList f '[] '[] where
-  hmap _ _ = HNil
-
-instance (ApplyAB f [a] b, HMap EntityL HList f l1 l2,SameLength' l1 l2)=> HMap EntityL HList f (a ': l1) (b ': l2) where
-  hmap f (x `ECons` xs) = applyAB f x `HCons` hmap f xs
-
-instance HMap SignalL HList f '[] '[] where
-  hmap _ _ = HNil
-
-instance (ApplyAB f [Signal a] b, HMap SignalL HList f l1 l2,SameLength' l1 l2)=> HMap SignalL HList f (a ': l1) (b ': l2) where
-  hmap f (x `SCons` xs) = applyAB f x `HCons` hmap f xs
-
-instance HMap HList HList f '[] '[] where
-  hmap _ _ = HNil
-
-instance (ApplyAB f a b, HMap HList HList f l1 l2,SameLength' l1 l2)=> HMap HList HList f (a ': l1) (b ': l2) where
-  hmap f (x `HCons` xs) = applyAB f x `HCons` hmap f xs
 
 data ToMap = ToMap
 data SigToMap = SigToMap
-newtype (Ord a) => Lookup a = Lookup a
+newtype Lookup a = Lookup [a]
 
 type family MapType a  where
   MapType (M.Map EntityId a) = 1
@@ -77,7 +57,7 @@ type family MapOut a where
   MapOut a = (M.Map (Maybe EntityId) a)
 
 instance (ApplyAB' (MapType a) ToMap [a] (MapOut a),MapOut a ~ b) => ApplyAB ToMap [a] b where
-  applyAB ToMap l = applyAB' (Proxy :: Proxy (MapType a)) ToMap l
+  applyAB ToMap = applyAB' (Proxy :: Proxy (MapType a)) ToMap
 
 class ApplyAB' (flag :: Nat) f a b where
   applyAB' :: Proxy flag -> f -> a -> b
@@ -94,59 +74,13 @@ instance ApplyAB' 2 ToMap [M.Map (Maybe EntityId) a] (M.Map (Maybe EntityId) a) 
 instance ApplyAB SigToMap [Signal a] (M.Map (Maybe EntityId) a) where
   applyAB SigToMap l = M.fromList $ map (\(Signal i d) ->(i,d)) l
 
-instance (Ord a) => ApplyAB (Lookup (Maybe a)) (M.Map (Maybe a) b) b where
+instance (Ord a) => ApplyAB (Lookup a) (M.Map (Maybe a) b) [b] where
   applyAB (Lookup x) m =
-    case M.lookup x m  of
-      Just a -> a
-      Nothing -> case M.lookup Nothing m of
-                    Just a -> a
-                    Nothing -> error "failed lookup of object component"
-
-class Contains a (xs :: [*])
-instance Contains a (a ': xs)
-instance (Contains a xs) => Contains a (b ': xs)
-
-class Sublist (a :: [*]) (b :: [*])
-instance Sublist '[] b
-instance (Contains a b,Sublist as b) => Sublist (a ': as) b
-
-class  FindH (r :: [*] -> *) a (lst :: [*]) where
-  findH :: r lst -> a
-
-type family TEq a b :: Bool where
-  TEq a a = 'True
-  TEq a b = 'False
-
-instance  (TEq a b ~ f, FindH' HList f a (b ': lst))=>FindH HList a (b ': lst) where
-  findH = findH' (Proxy :: Proxy f)
-
-class FindH' (r::[*] -> *) (b :: Bool) a (l :: [*]) where
-  findH' :: Proxy b -> r l -> a
-
-instance FindH' HList 'True a (a ': lst)  where
-  findH' Proxy (x `HCons` _) = x
-
-instance (TEq a b ~ f,FindH' HList f a (c ': lst))=>FindH' HList 'False a (b ': c ': lst)  where
-  findH' Proxy (_ `HCons` lst) = findH' (Proxy :: Proxy f) lst
-
-instance  (TEq a b ~ f, FindH' EntityL f [a] (b ': lst))=>FindH EntityL [a] (b ': lst) where
-  findH = findH' (Proxy :: Proxy f)
-
-instance FindH' EntityL 'True [a] (a ': lst)  where
-  findH' Proxy (x `ECons` _) = x
-
-instance (TEq a b ~ f,FindH' EntityL f [a] (c ': lst))=>FindH' EntityL 'False [a] (b ': c ': lst)  where
-  findH' Proxy (_ `ECons` lst) = findH' (Proxy :: Proxy f) lst
-
-class  Extract (r::[*] -> *) (a :: [*]) (b :: [*]) where
-  extract :: r a -> r b
-
-instance (FindH HList b lst ,Sublist lst (b ': bs), Extract HList lst bs) => Extract HList lst (b ': bs) where
-  extract lst = findH lst `HCons` extract lst
-
-instance Extract HList lst '[] where
-  extract _ = HNil
-
+    let l = mapMaybe ((`M.lookup` m).Just) x
+    in  if null l then
+          maybeToList $ m^?at Nothing ._Just
+        else
+          l
 
 
 
@@ -233,14 +167,38 @@ idTestInt = typeRep (Proxy :: Proxy (IDTest Int))
 
 
 type family UnmapArgs (a:: [*]) where
-  UnmapArgs (M.Map (Maybe EntityId) a ': as) =  a ':UnmapArgs as
-  UnmapArgs (M.Map EntityId a ': as) =  a ': UnmapArgs as
-  UnmapArgs (a ': as) = a ': UnmapArgs as
+  UnmapArgs (M.Map (Maybe EntityId) a ': as) =  [a] ':UnmapArgs as
+  UnmapArgs (M.Map EntityId a ': as) =  [a] ': UnmapArgs as
+  UnmapArgs (a ': as) = [a] ': UnmapArgs as
   UnmapArgs '[] = '[]
 
 data EvtWrapper a = C a | Id  (EntityId -> a)
 
-mkObject :: forall s e ein sin a sout . (Typeable a, HasId a, Monoid s,
+class Manager a where
+  managedIds :: a -> [EntityId]
+
+  default managedIds :: (HasId a) => a -> [EntityId]
+  managedIds a = maybeToList $ a^?ident
+
+--hiding constructor
+newtype EntIndex = EntIndex Int
+type ObjectMonad a = StateT EntIndex IO
+
+getIds :: forall a s e . (Typeable a,Monoid e) => Int -> Wire s e (ObjectMonad a) (Event Int) [EntityId] -- creates the passed number of ids, events create further Ids
+getIds x =
+  proc e -> do
+    evt <- now -< x
+    rec ents <- delay [] <<< rSwitch (mkConst $ Right []) -< (ents,
+                            (\x -> mkGen_ (\ents -> do
+                                            (EntIndex i) <- get
+                                            put (EntIndex $ i + x)
+                                            return $ Right (ents ++ map (typeRep (Proxy :: Proxy a),) [i..i+x])
+                            ) >>> now >>> hold)
+                          <$> mergeL evt e)
+    returnA -< ents
+
+
+mkObject :: forall s e ein sin a sout . (Typeable a, HasId a,Manager a, Monoid s,
               HMap EntityL HList ToMap ein (MapArgs ein),
               HMap SignalL HList SigToMap sin (MapArgs sin),
               SameLength' ein (MapArgs ein),
@@ -249,70 +207,54 @@ mkObject :: forall s e ein sin a sout . (Typeable a, HasId a, Monoid s,
               Monoid (EntityL ein),
               Monoid (EntityL (UnmapArgs ein)),
               Monoid (SignalL sout),
-              HMap HList HList (Lookup (Maybe EntityId)) (MapArgs ein) (UnmapArgs ein),
-              HMap HList HList (Lookup (Maybe EntityId)) (MapArgs sin) sin,
+              HMap HList HList (Lookup EntityId) (MapArgs ein) (UnmapArgs ein),
+              HMap HList HList (Lookup EntityId) (MapArgs sin) sin,
               SameLength' (MapArgs ein) (UnmapArgs ein),
               SameLength' (MapArgs sin) sin
               )
                =>
-            (a -> Wire s e IO (HList (UnmapArgs ein),HList sin) (a,SignalL sout)) ->
+            (a -> Wire s e (ObjectMonad a) (HList (UnmapArgs ein),HList sin) (a,SignalL sout)) ->
             (EntityId -> SignalL sout) ->
             Wire s e IO (EntityL ein,SignalL ((Create a) ': Destroy ': sin)) ([a],SignalL sout)
 mkObject create destroy =
-  let mkObject' i start mp news =  mkGen $ \ ds (entIn, creates `SCons` destroys `SCons` sigIn) -> do
+  let mkObject' i mp assocIds =  mkGen $ \ ds (entIn, creates `SCons` destroys `SCons` sigIn) -> do
         let emlst = hmap ToMap entIn :: HList (MapArgs ein)
             smlst = hmap SigToMap sigIn :: HList (MapArgs sin)
             (updates,newEvents) = partition
-              (\ x -> case x of
+              (\case
                 (Update a) -> M.member (a^?!ident) mp
                 _-> False
                 ) $ map _payload creates
-            mp' = foldl (\m (Update a) -> m & at (a^?!ident) .~ Just (create a)) mp updates
-            toEvent (Create a) = fmap C a
-            toEvent (CNoId a) = fmap Id a
-            toEvent (Update a) = Event $ C a
-            newObjects =   fmap ( (\(a,b) -> (a,Right (map snd b,mempty),M.fromList $ map fst b,mempty)) .
-                                  mapAccumL (\i c ->  case c of
-                                          (C a) -> (i,((a ^?!ident,create a),a))
-                                          (Id f) -> -- assign new id
-                                            let newId = (typeRep (Proxy :: Proxy a), i)
-                                            in (i+1, ((newId,create $ f newId),f newId))
-                                    ) i ) $
-                                mconcat $  map (fmap pure.toEvent) newEvents
-            removeObjects =
-              fmap (  (\(o,m) -> (i,Right ([],o),mempty,M.fromList m)) .
-                      foldl (\(res,lst) i ->
-                        ( destroy i  <> res,
-                          (i,mp^?!at i._Just) : lst)
-                            )
-                        (mempty,[])
-                    ) $ mconcat $ map (fmap (: []).(\(Dest i)-> i)._payload) destroys
-        (wireUpdate,output) <- runStateT (mapM (\(oId,oWire) -> do
-              let einput = hmap (Lookup (Just oId)) emlst :: HList (UnmapArgs ein)
-                  sinput = hmap (Lookup (Just oId)) smlst :: HList sin
-              (out,newWire) <-lift $ stepWire oWire ds (Right (einput,sinput))
-              modify (either Left (\x->fmap (\(ent,sigs) -> x <> ([ent],sigs)) out))
+            mp' = foldl (\mp d -> case d of
+                    (Dest (Event i)) -> M.delete i mp
+                    _ -> mp
+                ) (foldl (\m (Update a) -> m & at (a^?!ident) .~ Just (create a)) mp updates) (map _payload destroys)
+        (wireUpdate,(output,i')) <- runStateT (mapM (\(oId,oWire) -> do
+              let einput = hmap (Lookup (assocIds^?!at oId._Just)) emlst :: HList (UnmapArgs ein)
+                  sinput = hmap (Lookup (assocIds^?!at oId._Just)) smlst :: HList sin
+              ((out,newWire),EntIndex id') <-lift $ runStateT (stepWire oWire ds (Right (einput,sinput))) (EntIndex i)
+              _1 %= either Left (\x->fmap (\(ent,sigs) -> x <> ([ent],sigs)) out)
               return (oId,newWire)
-            ) (M.toList mp') ) (Right (mempty,mempty))
-        let mp'' = M.fromList  wireUpdate
-        return (fmap (,fmap ((\(i,start,nextMap,news)-> switch (mkObject' i start nextMap news . eventFilter) ) )
-                        (fmap (\(idCount,sig,adds,deletes) -> (
-                                    idCount,
-                                    (<>) <$> sig <*> output,
-                                    (mp'' `M.difference` deletes),
-                                    adds
-                                    )) $
-                        merge (\(idCount,addSig,adds,_) (_,deleteSig,_,deletes) ->  (
-                                idCount,
-                                (<>) <$> addSig <*> deleteSig,
-                                adds,
-                                deletes
-                                )) newObjects removeObjects ))
-                          ((<>) <$> start <*> output),
-                    mkObject' i (Right mempty) (mp'' `M.union` news) M.empty)
-      eventFilter = proc (entIn, creates `SCons` destroys `SCons` sigIn) -> do
-       c <- dSwitch (pure [] &&& now . pure id) -< map _payload creates
-       d <- dSwitch (pure [] &&& now . pure id) -<  map _payload destroys
-       returnA -< (entIn,sigify c `SCons` sigify d `SCons` sigIn)
-
-  in switch $ mkObject' 0 (Right mempty) M.empty M.empty
+            ) (M.toList mp') ) (Right (mempty,mempty),i)
+        let (news,i'') = foldl' (\(lst,i) c -> case c of
+                (Update a) |  M.member (a^?!ident) mp -> (lst,i)
+                           | otherwise -> ((a^?!ident,a):lst,i)
+                (Create (Event a)) -> ((a^?!ident,a):lst,i)
+                (CNoId (Event f)) ->
+                  let id = (typeRep (Proxy :: Proxy a),i)
+                  in  ((id, f id):lst ,i+1)
+                _ -> (lst,i)
+              ) ([],i') $ map _payload creates
+            mp'' = M.fromList $ foldl' (\mp (i,a) ->
+                  (i,create a):mp
+                ) wireUpdate news
+            mpOut = foldl (\mp d -> case d of
+                    (Dest (Event i)) -> M.delete i mp
+                    _ -> mp
+                ) mp'' (map _payload destroys)
+        return (fmap (\(ents,sigs) -> (ents ++ map snd news,sigs)) output,
+                    mkObject' i'' mpOut $
+                        either (const (assocIds :: M.Map EntityId [EntityId]))
+                          (foldl (\mp x -> mp & at (x^?!ident) .~ Just (managedIds x) ) assocIds.(++ map snd news).fst) output
+                       )
+  in mkObject' 0 M.empty M.empty

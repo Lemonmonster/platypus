@@ -1,6 +1,7 @@
-{-#LANGUAGE ExplicitForAll#-}
-{-#LANGUAGE ScopedTypeVariables#-}
-
+{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE Strict #-}
+{-# LANGUAGE StrictData #-}
 module Wires (
 integral,
 integralWith,
@@ -12,16 +13,30 @@ lowestOver,
 doOnce,
 signal,
 signal_,
-valWire
+valWire,
+dValWire,
+signalConcat,
+signalConcat_,
+eventToSignal,
+eventToSignal_,
+sigIntegral,
+modes,
+alternate
 )
 where
-import Control.Wire as ALL hiding (integral,integralWith)
+import Control.Wire as ALL hiding (integral,integralWith,modes,alternate)
 import Prelude as ALL hiding ((.),id,until)
 import Linear.Vector
 import Linear.Metric
 import Entity
 import Data.Maybe
 import Data.Typeable
+import Control.Wire.Unsafe.Event
+import qualified Data.Map.Strict as M
+import Control.Monad (liftM)
+
+instance Show (a -> b) where
+  show = const "<function>"
 
 integral :: (Fractional a, HasTime t s) => a-> Wire s e m a a
 integral x = mkPure $ \ds dx ->
@@ -77,11 +92,79 @@ doOnce = mkPure (\ _ a -> (Right a, inhibit mempty))
 
 signal ::forall a m b s e sl. (Monad m,HasId a,Typeable a)=> Maybe EntityId -> (a -> b) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signal target getter =arr $ \(vals,list) ->
-  (vals,map (Signal target . getter) (filter (((typeRep (Proxy :: Proxy a))==).fst.fromJust._ident) vals) `SCons` list)
+  (vals,map (Signal target . getter) (filter ((typeRep (Proxy :: Proxy a)==).fst.fromJust._ident) vals) `SCons` list)
 
 signal_ :: (Monad m,HasId a,Typeable a)=>  (a -> b) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signal_ = signal Nothing
 
+signalConcat ::forall a m b s e sl. (Monad m,HasId a,Typeable a)=>
+                Maybe EntityId -> (a -> [b]) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
+signalConcat target getter =arr $ \(vals,list) ->
+  (vals,concatMap (map (Signal target) . getter) (filter ((typeRep (Proxy :: Proxy a) ==).fst.fromJust._ident) vals) `SCons` list)
+
+signalConcat_ :: (Monad m,HasId a,Typeable a)=>  (a -> [b]) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
+signalConcat_ = signalConcat Nothing
+
 valWire :: (Monad m,Monoid s) => a -> Wire s e m (Event (a->a)) a
 valWire a =
   switch (pure a &&& arr (fmap ( (. notYet) . valWire . ($ a))))
+
+dValWire :: (Monad m,Monoid s) => a -> Wire s e m (Event (a->a)) a
+dValWire a =
+  dSwitch (pure a &&& arr (fmap ( dValWire . ($ a))))
+
+
+eventToSignal :: Maybe EntityId -> (a -> b) -> Event [a] -> [Signal (Event b)]
+eventToSignal i f NoEvent = [Signal i NoEvent]
+eventToSignal i f (Event lst) = map (Signal i . Event . f) lst
+eventToSignal_ = eventToSignal Nothing id
+
+--feedback based integral
+sigIntegral :: (Fractional a, HasTime t s) => Wire s e m (a,a) a
+sigIntegral =
+  let f :: (Fractional a, HasTime t s) => c -> Wire s e m (a,a) a
+      f _ = mkPure $ \ds (x,dx) ->
+            let dt = realToFrac $ dtime ds
+                x' = (x + (dt*dx))
+            in  x' `seq` (Right x',f x')
+  in f 0
+
+--redefined here to reduce laziness
+modes ::
+    (Monad m, Ord k)
+    => k  -- ^ Initial mode.
+    -> (k -> Wire s e m a b)  -- ^ Select wire for given mode.
+    -> Wire s e m (a, Event k) b
+modes m0 select = loop M.empty m0 (select m0)
+    where
+    loop ms' m' w'' =
+        WGen $ \ds mxev' ->
+            case mxev' of
+              Left _ -> do
+                  (mx, w) <- stepWire w'' ds (fmap fst mxev')
+                  return (mx, loop ms' m' w)
+              Right (x', ev) -> do
+                  let (ms, m, w') = switch ms' m' w'' ev
+                  (mx, w) <- stepWire w' ds (Right x')
+                  return (mx, loop ms m w)
+
+    switch ms' m' w' NoEvent = (ms', m', w')
+    switch ms' m' w' (Event m) =
+        let ms = M.insert m' w' ms' in
+        case M.lookup m ms of
+          Nothing -> (ms, m, select m)
+          Just w  -> (M.delete m ms, m, w)
+
+--redefined here to reduce laziness
+alternate ::
+  (Monad m)
+  => Wire s e m a b
+  -> Wire s e m a b
+  -> Wire s e m (a, Event x) b
+alternate w1 w2 = go w1 w2 w1
+    where
+    go w1' w2' w' =
+        WGen $ \ds mx' ->
+            let (w1, w2, w) | Right (_, Event _) <- mx' = (w2', w1', w2')
+                            | otherwise  = (w1', w2', w')
+            in liftM (second (go w1 w2)) (stepWire w ds (fmap fst mx'))

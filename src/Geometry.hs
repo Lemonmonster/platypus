@@ -1,6 +1,6 @@
-{-# LANGUAGE TupleSections#-}
-{-# LANGUAGE TemplateHaskell#-}
-{-# LANGUAGE FlexibleInstances#-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE Strict #-}
 module Geometry(
   Transform(..),
@@ -33,50 +33,51 @@ import Data.List
 import Control.Lens
 import Debug.Trace
 import Data.Maybe (fromJust)
+import Data.Ord (comparing)
 
-type Point = V2 Float
+type Point = V2 Double
 
-transMat :: Point -> V3 (V3 Float)
+transMat :: Point -> V3 (V3 Double)
 transMat (V2 x y) = V3 (V3 1 0 x) (V3 0 1 y) (V3 0 0 1)
 
-rotMat :: Float -> V3 (V3 Float)
+rotMat :: Double -> V3 (V3 Double)
 rotMat o =
   let c = cos o
       s = sin o
   in V3 (V3 c (-s) 1) (V3 s c 1) (V3 0 0 1)
 
-scaleMat :: Point -> V3 (V3 Float)
+scaleMat :: Point -> V3 (V3 Double)
 scaleMat (V2 w h) = V3 (V3 w 0 1) (V3 0 h 1) (V3 0 0 1)
 
 
-data Transform = Transform {_translation::Point,_scale::Point,_orientation::Float} deriving (Show,Eq,Ord)
+data Transform = Transform {_translation::Point,_scale::Point,_orientation::Double} deriving (Show,Eq,Ord)
 makeLenses ''Transform
 
 class Transformation a where
   convertTransform :: Transform -> a
 
-instance Transformation (V2 (V3 Float)) where
+instance Transformation (V2 (V3 Double)) where
   convertTransform (Transform (V2 x y) (V2 w h) o) =
     let c = cos o
         s = sin o
     in  V2 (V3 (c*w) (negate h*s) x) (V3 (s*w) (c*h) y)
 
-instance Transformation (V4 (V4 Float)) where
+instance Transformation (V4 (V4 Double)) where
   convertTransform (Transform (V2 x y) (V2 w h) o) =
     let c = cos o
         s = sin o
     in  V4 (V4 (c*w) (negate h*s) 0 x) (V4 (s*w) (c*h) 0 y) (V4 0 0 1 0) (V4 0 0 0 1)
 
-fillMul :: V2 Float -> V2 (V3 Float) -> V2 Float
+fillMul :: V2 Double -> V2 (V3 Double) -> V2 Double
 fillMul (V2 x y) mat = mat !* V3 x y 1
 
-fillMulV :: V2 Float -> V2 (V3 Float) -> V2 Float
+fillMulV :: V2 Double -> V2 (V3 Double) -> V2 Double
 fillMulV (V2 x y) mat = mat !* V3 x y 0
 
-fillMul3 :: V2 Float -> V3 (V3 Float) -> V2 Float
+fillMul3 :: V2 Double -> V3 (V3 Double) -> V2 Double
 fillMul3 (V2 x y) mat = (mat !* V3 x y 1) ^. _xy
 
-fillMulV3 :: V2 Float -> V3 (V3 Float) -> V2 Float
+fillMulV3 :: V2 Double -> V3 (V3 Double) -> V2 Double
 fillMulV3 (V2 x y) mat = (mat !* V3 x y 0) ^. _xy
 
 data PhysShape = Line {_trans::Transform} |
@@ -85,10 +86,10 @@ data PhysShape = Line {_trans::Transform} |
                 Polygon {_trans::Transform, _points::[Point]} |
                 Box {_pos::Point, _dim::Point} deriving (Show,Eq,Ord)
 
-newCircle :: V2 Float -> Float -> PhysShape
+newCircle :: V2 Double -> Double -> PhysShape
 newCircle p r = Circle $ Transform p (pure r) 0
 
-newOBB :: V2 Float -> V2 Float -> PhysShape
+newOBB :: V2 Double -> V2 Double -> PhysShape
 newOBB p d = OBB $ Transform p d 0
 
 newLine :: Point -> Point -> PhysShape
@@ -108,28 +109,28 @@ position f (Circle t@(Transform p _ _)) = (\p' -> Circle t{_translation = p'}) <
 position f (OBB t@(Transform p _ _)) = (\p' -> OBB t{_translation = p'}) <$> f p
 position f (Polygon t@(Transform p _ _) ps) = (\p' -> Polygon t{_translation = p'} ps) <$> f p
 
-orient :: Lens' PhysShape Float
+orient :: Lens' PhysShape Double
 orient f b@(Box p w) = const b <$> f 0
 orient f (Line t@(Transform _ _ o)) = (\o' -> Line t{_orientation= o'}) <$> f o
 orient f (Circle t@(Transform _ _ o)) = (\o' -> Circle t{_orientation = o'}) <$> f o
 orient f (OBB t@(Transform _ _ o)) = (\o' -> OBB t{_orientation = o'}) <$> f o
 orient f (Polygon t@(Transform _ _ o) ps) = (\o' -> Polygon t{_orientation = o'} ps) <$> f o
 
-doTranslate :: V2 Float -> PhysShape -> PhysShape
+doTranslate :: V2 Double -> PhysShape -> PhysShape
 doTranslate (V2 x y) (Line t@(Transform (V2 x1 y1) _ _)) = Line t{_translation=V2 (x+x1) (y+y1)}
 doTranslate (V2 x y) (OBB t@(Transform (V2 x1 y1) _ _)) = OBB t{_translation=V2 (x+x1) (y+y1)}
 doTranslate (V2 x y) (Polygon t@(Transform (V2 x1 y1) _ _) p) =Polygon t{_translation=V2 (x+x1) (y+y1)} p
 doTranslate (V2 x y) (Circle t@(Transform (V2 x1 y1) _ _)) =Circle t{_translation=V2 (x+x1) (y+y1)}
 doTranslate (V2 x y) (Box (V2 x1 y1) a) = Box (V2 (x+x1) (y+y1)) a
 
-doRotate :: Float->PhysShape->PhysShape
+doRotate :: Double->PhysShape->PhysShape
 doRotate r (Line t@(Transform _ _ o)) = Line t{_orientation=o+r}
 doRotate r (OBB t@(Transform _ _ o)) =OBB t{_orientation=o+r}
 doRotate r (Polygon t@(Transform _ _ o) p) = Polygon t{_orientation=o+r} p
 doRotate r (Circle t@(Transform _ _ o)) = Circle t{_orientation=o+r}
 doRotate _ b@(Box _ _) = b
 
-doScale :: V2 Float -> PhysShape->PhysShape
+doScale :: V2 Double -> PhysShape->PhysShape
 doScale (V2 w h) (Line t@(Transform _ (V2 w1 h1) _)) = Line t{_scale=V2 (w*w1) (h*h1)}
 doScale (V2 w h) (OBB t@(Transform _ (V2 w1 h1) _)) = OBB t{_scale=V2 (w*w1) (h*h1)}
 doScale (V2 w h) (Polygon t@(Transform _ (V2 w1 h1) _) p) = Polygon t{_scale=V2 (w*w1) (h*h1)} p
@@ -139,19 +140,19 @@ doScale (V2 w h) b@(Box _ (V2 w1 h1)) = b{_dim=V2 (w*w1) (h*h1)}
 radius (Circle (Transform _ (V2 w _) _)) = w/2
 center (Circle (Transform c _ _)) = c
 
-data Manifold = Manifold {point::Point,normal::Point,transVec::Point,offset::Float} deriving Show
+data Manifold = Manifold {points::[Point],normal::Point,transVec::Point,offset::Double} deriving (Show,Eq,Ord)
 rev (Manifold p n t o) = Manifold p (-n) t (-o)
 
-getBounds :: [Point] -> (Float, Float,Float,Float)
+getBounds :: [Point] -> (Double, Double,Double,Double)
 getBounds = foldl'
   (\(a,b,c,d) (V2 x y)->
           (min x a, min y b, max x c, max y d))
   (1/0,1/0,-1/0,-1/0)
 
-squarePoints :: [V2 Float]
+squarePoints :: [V2 Double]
 squarePoints  = [V2 0.5 0.5, V2 (-0.5) 0.5, V2 (-0.5) (-0.5) , V2 0.5 (-0.5)]
 
-squareAxis :: [V2 Float]
+squareAxis :: [V2 Double]
 squareAxis  = [V2 0 1, V2 1 0]
 
 getPNs :: PhysShape -> ([Point],[Point])
@@ -200,23 +201,30 @@ bound a b = bound (toBound a) (toBound b)
 
 boundManifold :: PhysShape -> PhysShape -> Maybe Manifold
 boundManifold a@(Box (V2 x1 y1) (V2 w1 h1)) b@(Box (V2 x2 y2) (V2 w2 h2)) =
-    let lbound x1 w1 x2 w2 = x1+w1>=x2 && x2+w2>=x1
-        getManifold (Box p1@(V2 x1 y1) d1@(V2 w1 h1)) (Box p2@(V2 x2 y2) d2@(V2 w2 h2)) =
+    let lbound x1 w1 x2 w2 = (x1+w1>=x2 && x2+w2>=x1)
+        getManifold b1@(Box p1@(V2 x1 y1) d1@(V2 w1 h1)) b2@(Box p2@(V2 x2 y2) d2@(V2 w2 h2)) =
           let mid a b = (a+b)/2
-              xOverlap = if x1<x2 then x1+w1-x2 else x1-(x2+w2)
-              yOverlap = if y1<y2 then y1+h1-y2 else y1-(y2+h2)
+              overlap a1 b1 a2 b2
+                    | a1 > a2 && b1 < b2 = if (b1-a2) > (b2 -a1)                      -- 1 is in 2
+                                             then  b2 - a1
+                                             else a2 - b1
+                    | a1 < a2 && b1 > b2 =  - overlap a2 b2 a1 b1   -- 2 is in 1
+                    | a1 >=  a2 && b1 >= b2  = b2 - a1                            -- 1 is in front
+                    | a1 <=  a2 && b1 <= b2  = a2 - b1                           -- 1 is behind
+              xOverlap = overlap x1 (x1+w1) x2 (x2+w2)
+              yOverlap = overlap y1 (y1+h1) y2 (y2+h2)
           in if abs xOverlap < abs yOverlap
              then
                let [a,b,c,d] = sort [x1,x1+w1,x2,x2+w2]
                    p
-                    | y1>y2 = mid (V2 b y1) (V2 c (y2+h2))
-                    | y1<=y2 = mid (V2 b (y1+w1)) (V2 c y2)
+                    | y1<y2 = [(V2 b y1),(V2 c (y2+h2))]
+                    | y1>=y2 =[(V2 b (y1+w1)),(V2 c y2)]
                in Manifold p (V2 1 0) (V2 1 0) xOverlap
              else
                let [a,b,c,d] = sort [y1,y1+h1,y2,y2+h2]
                    p
-                    | x1>x2 = mid (V2 x1 b) (V2 (x2+w2) c)
-                    | x1<=x2 = mid (V2 (x1+w1) b) (V2 x2 c)
+                    | x1<x2 = [(V2 x1 b),(V2 (x2+w2) c)]
+                    | x1>=x2 = [(V2 (x1+w1) b),(V2 x2 c)]
                in Manifold p (V2 0 1) (V2 0 1) yOverlap
     in  if lbound x1 w1 x2 w2 && lbound y1 h1 y2 h2
         then Just $ getManifold a b
@@ -224,29 +232,33 @@ boundManifold a@(Box (V2 x1 y1) (V2 w1 h1)) b@(Box (V2 x2 y2) (V2 w2 h2)) =
 boundManifold a b = boundManifold (toBound a) (toBound b)
 
 --avoids square root
-distSqrd :: Point -> Point -> Float
+distSqrd :: Point -> Point -> Double
 distSqrd (V2 x1 y1) (V2 x2 y2) = (x1-x2)^2 + (y1-y2)^2
 {-# INLINE distSqrd #-}
 
+epsilon = 0.0001
 --runs a seperating axis or seperating hyperplane algorithm
 doSat :: [Point] -> [Point] -> [Point] -> [Point] -> Maybe Manifold
 doSat points1 axis1 points2 axis2 =
   --projects all the points onto the axis and returns the overlap and vector if applicable
-  let overlap a@((a1,b1),p1@(pa1,pb1)) b@((a2,b2),p2@(pa2,pb2))
-        | a1 >= b2 || b1<=a2     = Nothing        --not overlapping
-        | a1 > a2 && b1 < b2 = if (b1-a2) > (b2 -a1)                      -- 1 is in 2
+  let overlap a@((a1,b1),p1) b@((a2,b2),p2)
+        | a1 > b2 || b1<a2     = Nothing        --not overlapping
+        | a1 >= a2 && b1 <= b2 = if (b1-a2) > (b2 -a1)                      -- 1 is in 2
                                  then  Just (b2 - a1,p1,p2)
                                  else  Just (a2 - b1,p1,p2)
         | a1 < a2 && b1 > b2 = (\(a,b,c) -> (negate a,b,c)) <$> overlap b a    -- 2 is in 1
         | a1 >=  a2 && b1 >= b2  = Just (b2 - a1,p1,p2)                            -- 1 is in front
         | a1 <=  a2 && b1 <= b2  = Just (a2 - b1,p1,p2)                           -- 1 is behind
-      doAxis :: Point -> [Point]->[Point] ->Bool-> Maybe (Point,Bool,(Float,(Point,Point),(Point,Point)))
+      doAxis :: Point -> [Point]->[Point] ->Bool-> Maybe (Point,Bool,(Double,([Point],[Point]),([Point],[Point])))
       doAxis axis points1 points2 t =
         let vec = normalize axis
-            sp = (pure 0, pure 0) ::(Point,Point)
-            start = ((1/0,-1/0),sp)
+            start = ((1/0,-1/0),([],[]))
+            fuzzySwap f a b p p' = case a-b of
+              x | abs x < epsilon -> p':p
+                | x `f` 0 -> p
+                | otherwise -> [p']
             f = (\((a,b),(p1,p2)) v -> let x = v `dot` vec in
-                 ((min a x, max b x),(if a > x then v else p1, if b< x then v else p2))
+                 ((min a x, max b x),(fuzzySwap (<) a x p1 v, fuzzySwap (>) b x p2 v))
                 )
             a = foldl' f start points1
             b = foldl' f start points2
@@ -263,18 +275,18 @@ doSat points1 axis1 points2 axis2 =
           res =  foldl' (foldFunc False) (foldl' (foldFunc True) start  axis1)   axis2
       in  toManifold <$> res
 
-doSatCircle :: [Point] -> [Point] -> Point -> Float -> Maybe Manifold
+doSatCircle :: [Point] -> [Point] -> Point -> Double -> Maybe Manifold
 doSatCircle points1 axis1 c r =
   --projects all the points onto the axis and returns the overlap and vector if applicable
   let overlap a@((a1,b1),(pa1,pb1)) b@((a2,b2),(pa2,pb2))
-        | a1 >= b2 || b1<=a2     = Nothing        --not overlapping
-        | a1 > a2 && b1 < b2 = if (b1-a2) > (b2 -a1)                      -- 1 is in 2
+        | a1 > b2 || b1<a2     = Nothing        --not overlapping
+        | a1 >= a2 && b1 <= b2 = if (b1-a2) > (b2 -a1)                      -- 1 is in 2
                                  then  Just (b2 - a1,(pa1,pb1),(pa2,pb2))
                                  else  Just (a2 - b1,(pa1,pb1),(pa2,pb2))
         | a1 < a2 && b1 > b2 = (\(a,b,c) -> (negate a,b,c)) <$> overlap b a    -- 2 is in 1
         | a1 >=  a2 && b1 >= b2  = Just (b2 - a1,(pa1,pb1),(pa2,pb2))                            -- 1 is in front
         | a1 <=  a2 && b1 <= b2  = Just (a2 - b1,(pa1,pb1),(pa2,pb2))                           -- 1 is behind
-      doAxis :: Point -> [Point] ->Bool-> Maybe (Point,Bool,(Float,(Point,Point),(Point,Point)))
+      doAxis :: Point -> [Point] ->Bool-> Maybe (Point,Bool,(Double,(Point,Point),(Point,Point)))
       doAxis axis points1 t =
         let vec = normalize axis
             sp = (pure 0, pure 0) ::(Point,Point)
@@ -304,7 +316,7 @@ doSatCircle points1 axis1 c r =
                 comp (Just (_,a)) Nothing = a
                 comp Nothing (Just (_,a)) = a
                 comp (Just (v1,a)) (Just (v2,b)) = if v1<v2 then a else b
-              in Manifold (comp (pdist pa)  (pdist pb)) n n (negate $ abs d)
+              in Manifold [comp (pdist pa)  (pdist pb)] n n (negate $ abs d)
           toManifold a@(v,t,(d,p1,p2)) = resolvePoint a
           start = (Just (pure 0 ,True,(1/0,(pure 0,pure 0),(pure 0,pure 0))))
           res = (foldl' (foldFunc True) start (axis1++(map (c -) points1)))
@@ -315,7 +327,7 @@ doSatUncurried (points1, axis1) (points2, axis2) = doSat points1 axis1 points2 a
 
 collision :: PhysShape -> PhysShape -> Maybe Manifold
 collision a@(OBB (Transform tt1 ts1 o1)) b@(OBB (Transform tt2 ts2 o2))
-    | o1 == 0 && o2 == 0 = boundManifold a b
+    -- | o1 == 0 && o2 == 0 = boundManifold a b
     |otherwise =  doSatUncurried ( getPNs a) (getPNs b)
 
 collision a@(OBB t) b@(Line s) = doSatUncurried (getPNs a) (getPNs b)
@@ -345,7 +357,7 @@ collision (Circle (Transform c1 (V2 w1 _) _)) (Circle (Transform c2 (V2 w2 _) _)
       collision = d2 < rs
       n = normalize (c2-c1)
   in if collision then
-         Just $ Manifold ((c1+c2) ^/ 2) n n $ negate (((w1 + w2)/2) - distance c1 c2 )
+         Just $ Manifold [((c1+c2) ^/ 2)] n n $ negate (((w1 + w2)/2) - distance c1 c2 )
      else Nothing
 
 --this is an inefficient implementation

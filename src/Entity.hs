@@ -1,4 +1,4 @@
-{-#LANGUAGE MultiParamTypeClasses#-}
+{-#LANGUAGE MultiParamTypeClasses #-}
 {-#LANGUAGE GADTs #-}
 {-#LANGUAGE DataKinds #-}
 {-#LANGUAGE KindSignatures #-}
@@ -11,7 +11,18 @@
 {-#LANGUAGE FlexibleContexts #-}
 {-#LANGUAGE OverloadedLists #-}
 {-#LANGUAGE TypeFamilies #-}
-module Entity where
+module Entity (
+  EntityW,
+  wire,
+  HasId,
+  ident,
+  _ident,
+  Delayed (..),
+  fromDelay,
+  EntityId,
+  generateNetwork,
+  module HList
+)where
 
 import Prelude hiding ((.), id)
 import Control.Wire hiding (at,when,unless)
@@ -32,17 +43,13 @@ import Data.Typeable
 import System.IO
 import Text.Regex.PCRE
 import Text.Regex
+import HList
 
-data Signal c = Signal{_target::Maybe (TypeRep,Int),_payload::c}
-makeLenses ''Signal
+class EntityW (ine :: [*]) (ins:: [*]) oute (outs :: [*]) | oute -> ine ins outs where
+  wire :: Wire (Timed NominalDiffTime ()) () IO (EntityL ine,SignalL ins) ([oute],SignalL outs) -- (feedback, entities in, signal in) (entities out, signal out)
 
-sigify :: [a] -> [Signal a]
-sigify = map $ Signal Nothing
-
-instance (Show a) => Show (Signal a) where
-  show (Signal x y) = "(Signal " ++ show x ++" "++show y++")"
-
-data Delayed a  = D a
+data Delayed a  = D{_delayedPayload::a}
+makeLenses ''Delayed
 
 instance (Show a) => Show (Delayed a) where
   show (D x) = "(D "++show x++")"
@@ -51,82 +58,6 @@ instance (Show a) => Show (Delayed a) where
 
 fromDelay :: Delayed a -> a
 fromDelay (D x) = x
-
-
-data family HList (l::[*])
-
-data instance HList '[] = HNil
-data instance HList (x ': xs) = x `HCons` HList xs
-
-infixr 8 `HCons`
-
-headH:: HList ( a  ': lst) -> a
-headH (HCons x _) = x
-tailH :: HList ( a  ': lst) -> HList lst
-tailH (HCons _ x) = x
-
-instance Show (HList '[]) where
-  show HNil = "HNil"
-
-instance (Show a,Show (HList b)) => Show (HList (a ': b)) where
-  show (HCons x l) = "(HCons "++show x++" "++show l++")"
-
-
-data family SignalL (l::[*])
-
-data instance SignalL '[] = SNil
-data instance SignalL (x ': xs) = [Signal x] `SCons` SignalL xs
-
-infixr 8 `SCons`
-
-instance Show (SignalL '[]) where
-  show SNil = "SNil"
-
-instance (Show a,Show (SignalL b)) => Show (SignalL (a ': b)) where
-  show (SCons x l) = "(SCons "++show x++" "++show l++")"
-
-class EmptySig (a::[*]) where
-  emptySignal :: SignalL a
-
-instance EmptySig c => EmptySig ( a  ': c) where
-  emptySignal = [] `SCons` emptySignal
-
-instance EmptySig '[] where
-  emptySignal = SNil
-
-headS:: SignalL (a ': lst) -> [Signal a]
-headS (SCons x _) = x
-tailS :: SignalL (a ': lst) -> SignalL lst
-tailS (SCons _ x) = x
-data family EntityL (l::[*])
-
-data instance EntityL '[] = ENil
-data instance EntityL (x ': xs) = [x] `ECons` EntityL xs
-
-infixr 8 `ECons`
-
-instance Show (EntityL '[]) where
-  show ENil = "ENil"
-
-instance (Show a,Show (EntityL b)) => Show (EntityL (a ': b)) where
-  show (ECons x l) = "(ECons "++show x++" "++show l++")"
-
-headE:: EntityL ( a  ': lst) -> [a]
-headE (ECons x _) = x
-tailE :: EntityL ( a  ': lst) -> EntityL lst
-tailE (ECons _ x) = x
-
-class EmptyEnt (a::[*]) where
-  emptyEntity :: EntityL a
-
-instance (EmptyEnt c) => EmptyEnt (a ': c) where
-  emptyEntity = [] `ECons` emptyEntity
-
-instance EmptyEnt '[] where
-  emptyEntity = ENil
-
-class EntityW (ine :: [*]) (ins:: [*]) oute (outs :: [*]) | oute -> ine ins outs where
-  wire :: Wire (Timed NominalDiffTime ()) () IO (EntityL ine,SignalL ins) ([oute],SignalL outs) -- (feedback, entities in, signal in) (entities out, signal out)
 
 data EType =
       Sig Type |
@@ -156,7 +87,7 @@ makeLenses ''WireExpr
 instance Show WireExpr where
   show (WAnd _ _ exprs) = "(WAnd " ++ show exprs ++" )"
   show (WRec _ _ vals expr) = "(WRec " ++(show $ S.toList $ vals )++ " "++ show expr ++" )"
-  show (WR _ _ (_,_,t,_)) =  simplifyTypes $ "(WR " ++ show t ++" )"
+  show (WR _ _ (_,_,t,_)) = "(WR " ++ show t ++" )"
   show (WApp _ _ l r) = "( " ++ show l ++ " >>> " ++ show r++" )"
   show (WPass typeIn tout pass expr) = "(WPass " ++ (show $ S.toList $ pass )  ++" )"
   show (WDelay _ _) = "WDelay"
@@ -171,6 +102,9 @@ class HasId a where
   ident = ignored
   _ident:: a -> (Maybe EntityId)
   _ident = (^?ident)
+
+instance (HasId a) => HasId (Delayed a) where
+  ident = delayedPayload.ident
 
 wireExprToDot expression = do
   let nextName = state $ \(m,i) -> (show i,(m,i+1))
@@ -201,6 +135,7 @@ wireExprToDot expression = do
         toGraph rname r
       toGraph node (WPass tin _ pass expr) = do
         ename <- nextName
+
         _1 %= M.insert node ([ename],node++" [label=\"pass "++simplifyTypes (show (S.toList pass))++"\" shape=diamond];")
         ends <- toGraph ename expr
         return (node:ends)
@@ -346,7 +281,7 @@ generateNetwork = do
         unflattenArrow <- do
           names <- mapM (\t-> (t,) <$>  newName "valIn") types
           return $ VarE 'arr `AppE` ParensE
-            (LamE [TupP (map (VarP . snd) names)]
+            (LamE [TildeP $ TupP (map (VarP . snd) names)]
               (foldl'
                 (\e expr-> TupE [TupE $ map (VarE . fromJust.(`lookup` names)) (S.toList $ expr^.tin),e])
                 (TupE $ map (VarE . fromJust.(`lookup` names)) (S.toList $ ex^.tin))
@@ -356,7 +291,7 @@ generateNetwork = do
         flattenArrow <- do
           names@(nx:nxs) <- mapM (\e -> mapM (\t->(t,) <$> newName "out") (S.toList $ e^.tout)) (reverse expressions)
           let concatNames = concat names
-          return $ VarE 'arr `AppE` ParensE (LamE [foldl' (\e nameList -> TupP [TupP (map (VarP . snd) nameList),e]) (TupP (map (VarP . snd) nx)) nxs]
+          return $ VarE 'arr `AppE` ParensE (LamE [foldl' (\e nameList -> TildeP $ TupP [TildeP $ TupP (map (VarP . snd) nameList),e]) (TildeP $ TupP (map (VarP . snd) nx)) nxs]
             (TupE (map (\t-> let names = map snd $ filter ((==t).fst) concatNames
                              in intersperseE (VarE '(++)) (map VarE names) )
                         (S.toList typesOut)
@@ -375,39 +310,58 @@ generateNetwork = do
           recNames <- mapM (\t -> (t,) <$> newName "rec") recTypes
           let names = lnames ++ recNames
           return $ VarE 'arr `AppE` ParensE (
-              LamE [TupP [TupP $ map (VarP . snd) lnames, TupP $ map (VarP . snd) recNames]]
+              LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd) lnames, TildeP $ TupP $ map (VarP . snd) recNames]]
                    (TupE $ map (\t-> intersperseE (VarE '(++)) $ map (VarE . snd) $ filter ((==t).fst) names) (S.toList (expr^.tin)))
             )
         rarrow <- do
           names <- mapM (\t -> (t,) <$> newName "valIn") (S.toList (expr^.tout))
           return $ VarE 'arr `AppE` ParensE (
-              LamE [TupP [TupP $ map (VarP . snd) names]]
+              LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd) names]]
                    (TupE [TupE $ map (VarE .fromJust.(`lookup` names)) (S.toList typesOut),TupE $ map (VarE .fromJust'.(`lookup` names)) recTypes])
             )
         return $
-          VarE 'loop `AppE` ParensE (UInfixE (AppE (VarE 'second) $ ParensE (AppE (VarE 'delay) (TupE $ map (const $ ListE []) recTypes))) (VarE '(>>>))
-            (ParensE (UInfixE larrow (VarE '(>>>)) (UInfixE expr' (VarE '(>>>)) rarrow))))
+          VarE 'loop `AppE` ParensE (ParensE (UInfixE larrow (VarE '(>>>)) (UInfixE expr' (VarE '(>>>)) rarrow)))
       convertToExpression (WR tin tout (entIn,sigIn,entOut@(Ent entityTypeOut),sigOut)) = do
           --runIO $ print "WR"
+          let isDelay (Delayed _ ) = True
+              isDelay _ = False
+              unDelay (Delayed x) = x
+              unDelay x = x
+              delayedSet = S.fromList $  map unDelay (filter isDelay entIn) ++ sigIn
+              undelayedSet = S.difference tin delayedSet
+          dArrow <- do
+            inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin)
+            delayedSetNames <- mapM (\t -> (t,) <$> newName "valDelayed") (S.toList delayedSet)
+            undelayedSetNames <- mapM (\t -> (t,) <$> newName "valUndelayed") (S.toList undelayedSet)
+            return $ UInfixE (UInfixE (VarE 'arr `AppE` ParensE (
+              LamE [TildeP $ TildeP $ TupP (map (VarP . snd ) inNames)]
+              (
+                TupE [TupE (map (VarE . fromJust.(`lookup` inNames)) (S.toList delayedSet)),
+                      TupE (map (VarE . fromJust.(`lookup` inNames)) (S.toList undelayedSet))]
+              )
+              )) (VarE '(>>>)) (VarE 'first `AppE` ParensE (VarE 'delay `AppE` TupE (map (const (ListE [])) (S.toList delayedSet)))))
+               (VarE '(>>>)) (VarE 'arr `AppE` LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd ) delayedSetNames,TildeP $ TupP $ map (VarP . snd ) undelayedSetNames]]
+                                 (TupE $ map (VarE.(\x-> fromJust (lookup x delayedSetNames <|> lookup x undelayedSetNames))) (map fst inNames))
+               )
           larrow <- do
             inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin)
             --filterExp <- [|filter (maybe True (== typeRep (Proxy :: Proxy $(return entityTypeOut)).fst))|]
             let toEntListExpression (Delayed x) = ParensE (VarE 'map `AppE` ConE 'D `AppE` toEntListExpression x)
                 toEntListExpression x = VarE (fromJust (lookup x inNames))
-            return $ VarE 'arr `AppE` ParensE (
-                LamE [TupP (map (VarP . snd) inNames)]
+            return $ UInfixE dArrow (VarE '(>>>)) (VarE 'arr `AppE` ParensE (
+                LamE [TildeP $ TupP (map (VarP . snd) inNames)]
                      (TupE [intersperseE (ConE 'ECons) (map toEntListExpression entIn ++ [ConE 'ENil]),
                             intersperseE (ConE 'SCons) (map (VarE . fromJust . (`lookup` inNames)) sigIn ++ [ConE 'SNil])
                      ])
-              )
+              ))
           rarrow <- do
             sigNames <- mapM (\t -> (t,) <$> newName "sig") sigOut
             let names = reverse $ map (VarP . snd) sigNames
             entityName <- newName "ent"
-            return $ VarE 'arr `AppE` ParensE (
-                LamE [TupP [VarP entityName,foldl' (\e t-> ConP 'SCons [t,e]) (ConP 'SNil []) names]]
+            return $ UInfixE (VarE 'arr `AppE` ParensE (
+                LamE [TildeP $ TupP [VarP entityName,foldl' (\e t-> ConP 'SCons [t,e]) (ConP 'SNil []) names]]
                      (TupE $ map (\t -> intersperseE (VarE '(++)) $ map (VarE . snd) $ filter ((==t).fst) ((entOut,entityName):sigNames))  (S.toList tout))
-              )
+              )) (VarE '(>>>)) (VarE 'force)
           t <- [t|Wire (Timed NominalDiffTime ()) () IO|]
           let fromEnt (Delayed x) = ConT ''Delayed `AppT` fromEnt x
               fromEnt (Ent x) = x
@@ -426,7 +380,7 @@ generateNetwork = do
         r' <- convertToExpression r
         glueArrow <- do
           names <- nameTable (S.toList (l^.tout)) "tin"
-          return $ AppE (VarE 'arr) (LamE [TupP (map (VarP . snd) names)]
+          return $ AppE (VarE 'arr) (LamE [TildeP $ TupP (map (VarP . snd) names)]
                                           (TupE (map (VarE . fromJust .(`lookup` names)) (S.toList (r^.tin)) )))
         --runIO $ print "WApp"
         return (UInfixE (ParensE l') (VarE '(>>>)) (UInfixE glueArrow (VarE '(>>>)) (ParensE r')))
@@ -441,7 +395,7 @@ generateNetwork = do
             --print $ map (`lookup` names) (S.toList (expr^.tin))
             return ()
           return $ VarE 'arr `AppE` ParensE (
-                LamE [TupP $ map (VarP . snd) names]
+                LamE [TildeP $ TupP $ map (VarP . snd) names]
                      (TupE [TupE $ map (VarE . fromJust.(`lookup` names)) (S.toList passVals) ,
                             TupE $  map (VarE . fromJust.(`lookup` names)) (S.toList (expr^.tin))
                             ])
@@ -451,7 +405,7 @@ generateNetwork = do
           outNames <- nameTable (S.toList (expr^.tout)) "out"
           let table = passNames ++ outNames
           return $ VarE 'arr `AppE` ParensE (
-                LamE [TupP [ TupP $ map (VarP . snd) passNames,TupP $ map (VarP . snd) outNames ]]
+                LamE [TildeP $ TupP [ TildeP $ TupP $ map (VarP . snd) passNames,TildeP $ TupP $ map (VarP . snd) outNames ]]
                      (TupE $ map (\t -> intersperseE (VarE '(++)) (map (VarE . snd) $ filter ((==t).fst) table)) (S.toList typesOut))
             )
         return $ UInfixE larrow (VarE '(>>>)) (UInfixE (VarE 'second `AppE` ParensE ex) (VarE '(>>>))  rarrow)
@@ -476,9 +430,10 @@ generateNetwork = do
 
     writeFile "data.dot" dot
     writeFile "network.dot" =<< wireExprToDot wireExpression
-    print $ "root "++show root
-    mapM (print.("tree "++).show) tree
-    print open
+    -- mapM_ print expressions
+    --print $ "root "++show root
+    --mapM (print.("tree "++).show) tree
+    --print open
     --writeFile "expr.text" $ pprint expression
     --print.pprint $ SigT (AppT  (AppT PromotedConsT  (VarT x)) PromotedNilT) (AppT ListT StarT)
     --print $ pprint $ (UInfixE (VarE x) (VarE '(+)) (UInfixE (VarE x) (VarE '(+)) (VarE x)))

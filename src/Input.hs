@@ -1,6 +1,6 @@
-{-#LANGUAGE FlexibleInstances#-}
-{-#LANGUAGE OverloadedStrings#-}
-{-#LANGUAGE GADTs#-}
+{-#LANGUAGE FlexibleInstances #-}
+{-#LANGUAGE OverloadedStrings #-}
+{-#LANGUAGE GADTs #-}
 {-#LANGUAGE TypeFamilies #-}
 {-#LANGUAGE TemplateHaskell #-}
 {-#LANGUAGE Strict #-}
@@ -25,7 +25,7 @@ import Debug.Trace
 import Data.Function (fix)
 import Data.Maybe (fromMaybe)
 
-data Mouse = Mouse{_pressed::MouseButton -> Bool,_position::V2 Float}
+data Mouse = Mouse{_pressed::MouseButton -> Bool,_position::V2 Double}
 makeLenses ''Mouse
 
 newtype Keyboard = Keyboard (Scancode -> Bool)
@@ -62,10 +62,10 @@ instance EntityW '[Delayed (Window,GLContext)] '[Quit] (Window,GLContext) '[] wh
       )
 
 instance EntityW '[(Window,GLContext)] '[]  Window '[] where
-  wire = first ( arr (map fst . headE))
+  wire = first ( arr (map fst . headH))
 
 instance EntityW '[(Window,GLContext)] '[]  GLContext '[] where
-  wire =  first ( arr (map snd . headE))
+  wire =  first ( arr (map snd . headH))
 
 instance EntityW '[Window,Renderer.Renderer,SDL.Event] '[] Mouse '[] where
   wire =   first $ mkGen $ fix (\ f m s (l `ECons` [r] `ECons` e `ECons` ENil) ->  do

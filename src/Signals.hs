@@ -1,9 +1,9 @@
-{-#LANGUAGE MultiParamTypeClasses#-}
-{-#LANGUAGE FunctionalDependencies#-}
-{-#LANGUAGE FlexibleInstances#-}
+{-#LANGUAGE MultiParamTypeClasses #-}
+{-#LANGUAGE FunctionalDependencies #-}
+{-#LANGUAGE FlexibleInstances #-}
 module Signals where
 
-import Control.Wire (Event)
+import Control.Wire.Unsafe.Event (Event(..))
 import Entity
 import Control.DeepSeq
 
@@ -20,3 +20,13 @@ class SignalType s t | s -> t where
 
 instance SignalType (Create a) a where
   unsignal = map (\(Signal _ (Update a)) -> a)
+
+instance (Show a) => Show (Create a) where
+  show (Create (Event a)) = "(Create (Event " ++ show a ++"))"
+  show (CNoId _) = "(CNoId Event)"
+  show (Update a) = "(Update " ++ show a ++ ")"
+
+
+instance Show Destroy where
+  show (Dest NoEvent) = "(Dest NoEvent)"
+  show (Dest (Event a))= "(Dest (Event " ++ show a ++ "))"
