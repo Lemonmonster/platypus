@@ -30,6 +30,8 @@ import Debug.Trace
 import BasicGeometry
 import Data.Fixed (mod')
 import qualified Linear as L (angle)
+import System.Random
+import Data.Function (fix)
 
 data Projectile = Projectile {_dynGeo::DynamicGeom} deriving (Typeable,Show)
 makeLenses ''Projectile
@@ -105,8 +107,31 @@ instance EntityW '[Keyboard,M.Map EntityId Body] '[Create Ship,Destroy] Ship '[C
             sprt = (sp & shape.trans.scale .~ scal)
             pVec = L.angle (bdy^.angle + if facing == 1 then 0 else pi)
         aVel' <- sigIntegral -< (bdy^.aVel,-(bdy^.aVel * 3)) -- damping
+        flareEvt <-  (proc (i,pos,vel) -> do
+                              let addAng = if i>0 then 0 else pi
+                                  life = 1
+                              ang <- randomRW -< (addAng - pi/16,addAng + pi/16)
+                              let start = pos - (L.angle ang * 30)
+                              periodic 0.01 -< (proc _ -> do
+                                   pos' <- integral start . dragW (vel - (L.angle ang * 100)) -< 0.4
+                                   animate <- now -< True
+                                   change <- never -< ()
+                                   for life . spriteWire ((newSprite "Defender" "flare" (newOBB start 20))
+                                                          {_frameRate= fromRational.toRational $ 10/life,
+                                                           _animating = True,
+                                                           _ssz = -1 }) -<
+                                     (newOBB pos' 20, animate,change)
+                               )
+                          ) -< (facing,bdy^.pos,obj ^. Physics.vel)
+        flames <- (fix ( \ f l ->
+                       dipSwitch
+                          (\x -> return . map ((),))
+                          l
+                          (arr fst)
+                          (\ lst x -> f (x:lst))
+                      )) [] -< (flareEvt)
         returnA -< (Ship sprt (bdy & aVel.~aVel'),
-                    sigify (toDrawables bdy (hEnd $ hBuild sprt :: HList '[Sprite])) `SCons`
-                    sigify [CNoId $ (newProjectile (pVec * 35 + obj^.pos) (pVec * 1000) ) <$ proj] `SCons` SNil))
+                    sigify (tdo flames : toDrawables bdy (hEnd $ hBuild sprt :: HList '[Sprite])) `SCons`
+                    sigify [CNoId $ (newProjectile (pVec * 35 + obj^.pos ) (pVec * 1000) ) <$ proj] `SCons` SNil))
               (const mempty)
               >>>  signal_ (Update . (^.obj))

@@ -29,7 +29,7 @@ import EntityUtils
 import Wires
 import Graphics
 
-data StaticGeom = StaticGeom{_gid::(TypeRep,Int),_gshape::Shape} deriving (Show,Typeable)
+data StaticGeom = StaticGeom{_gid::EntityId,_gshape::Shape} deriving (Show,Typeable)
 makeLenses ''StaticGeom
 
 instance HasId StaticGeom where
@@ -57,7 +57,7 @@ instance EntityW '[] '[Create StaticGeom,Destroy] StaticGeom [DrawableObject,Cre
           returnA -< (a, sigify [tdo  (a^.gshape)] .*. sigify [Create c] .*. SNil)
     in second initialSet >>> mkObject create (const mempty)
 
-data DynamicGeom = DynGeo {_dgid::(TypeRep,Int),_dgPhys::Body,_dgcolor::V4 Float} deriving (Typeable,Show)
+data DynamicGeom = DynGeo {_dgid::EntityId,_dgPhys::Body,_dgcolor::V4 Float} deriving (Typeable,Show)
 makeLenses ''DynamicGeom
 
 instance HasId DynamicGeom where

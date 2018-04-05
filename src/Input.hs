@@ -52,6 +52,9 @@ instance EntityW '[Delayed (Window,GLContext)] '[Quit] (Window,GLContext) '[] wh
         gl <- glCreateContext window
         clearColor $= Color4 0.4 0.4 0.4 1
         swapInterval $= ImmediateUpdates
+        blend $= Enabled
+        depthFunc $= Nothing
+        blendFunc $= (One,OneMinusSrcAlpha)
         return $ Right ([(window,gl)],SNil)
       D x :_ -> do
         --print q

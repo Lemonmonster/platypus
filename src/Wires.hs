@@ -2,6 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TupleSections #-}
 module Wires (
 integral,
 integralWith,
@@ -21,7 +23,16 @@ eventToSignal,
 eventToSignal_,
 sigIntegral,
 modes,
-alternate
+alternate,
+pSwitch,
+dpSwitch,
+ipSwitch,
+dipSwitch,
+randomW,
+randomRW,
+dragW,
+lift,
+signalToEvent
 )
 where
 import Control.Wire as ALL hiding (integral,integralWith,modes,alternate)
@@ -34,6 +45,11 @@ import Data.Typeable
 import Control.Wire.Unsafe.Event
 import qualified Data.Map.Strict as M
 import Control.Monad (liftM)
+import Control.Monad.IO.Class
+import Data.Semigroup ((<>)) 
+import Data.Either
+import System.Random
+import Control.Monad.Trans.Class
 
 instance Show (a -> b) where
   show = const "<function>"
@@ -92,7 +108,7 @@ doOnce = mkPure (\ _ a -> (Right a, inhibit mempty))
 
 signal ::forall a m b s e sl. (Monad m,HasId a,Typeable a)=> Maybe EntityId -> (a -> b) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signal target getter =arr $ \(vals,list) ->
-  (vals,map (Signal target . getter) (filter ((typeRep (Proxy :: Proxy a)==).fst.fromJust._ident) vals) `SCons` list)
+  (vals,map (Signal target . getter) (filter ((typeRep (Proxy :: Proxy a)==).idType.fromJust._ident) vals) `SCons` list)
 
 signal_ :: (Monad m,HasId a,Typeable a)=>  (a -> b) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signal_ = signal Nothing
@@ -100,7 +116,7 @@ signal_ = signal Nothing
 signalConcat ::forall a m b s e sl. (Monad m,HasId a,Typeable a)=>
                 Maybe EntityId -> (a -> [b]) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signalConcat target getter =arr $ \(vals,list) ->
-  (vals,concatMap (map (Signal target) . getter) (filter ((typeRep (Proxy :: Proxy a) ==).fst.fromJust._ident) vals) `SCons` list)
+  (vals,concatMap (map (Signal target) . getter) (filter ((typeRep (Proxy :: Proxy a) ==).idType.fromJust._ident) vals) `SCons` list)
 
 signalConcat_ :: (Monad m,HasId a,Typeable a)=>  (a -> [b]) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signalConcat_ = signalConcat Nothing
@@ -119,6 +135,11 @@ eventToSignal i f NoEvent = [Signal i NoEvent]
 eventToSignal i f (Event lst) = map (Signal i . Event . f) lst
 eventToSignal_ = eventToSignal Nothing id
 
+signalToEvent :: (a -> Maybe (Event b)) -> (b -> b -> b) ->[Signal a] -> Event b
+signalToEvent convert merg lst =
+   foldl (merge merg) NoEvent $ catMaybes $ map (convert._payload) lst
+   
+
 --feedback based integral
 sigIntegral :: (Fractional a, HasTime t s) => Wire s e m (a,a) a
 sigIntegral =
@@ -128,6 +149,25 @@ sigIntegral =
                 x' = (x + (dt*dx))
             in  x' `seq` (Right x',f x')
   in f 0
+
+dragW :: (Monoid s,Fractional a,HasTime t s) => a -> Wire s e m a a
+dragW start = mkSF $ \ dx s ->
+  let x' = (start - (realToFrac (dtime dx)*start*s))
+  in  (x',dragW start)
+
+randomRW :: (Random a,MonadIO m) =>  Wire s e m (a,a) a
+randomRW = mkGen_ $ \ range  ->
+  liftIO $ Right <$> randomRIO range
+
+randomW :: (MonadIO m,Random a) => Wire s e m b a
+randomW = mkGen_ $ \ _ ->
+  liftIO $ Right <$> randomIO
+
+
+liftW :: (MonadTrans t,Monoid s, Monad m, Monad (t m)) => Wire s e m a b -> Wire s e (t m) a b
+liftW w = mkGen $ \ ds a -> do
+    (b,w') <- lift $ stepWire w ds (Right a)
+    return (b,liftW w')
 
 --redefined here to reduce laziness
 modes ::
@@ -168,3 +208,69 @@ alternate w1 w2 = go w1 w2 w1
             let (w1, w2, w) | Right (_, Event _) <- mx' = (w2', w1', w2')
                             | otherwise  = (w1', w2', w')
             in liftM (second (go w1 w2)) (stepWire w ds (fmap fst mx'))
+
+--a netwire implementation of the Yampa function
+--inhibits when any of the wires inhibit
+pSwitch :: (Monad m , Monoid s,Traversable col, Foldable col,Monoid e) =>
+           (forall sf. a -> col sf -> m (col (b, sf))) ->
+           col (Wire s e m b c) ->
+           Wire s e m (a, col c) (Event evt) ->
+           (col (Wire s e m b c) ->  evt -> Wire s e m a (col c)) ->
+           Wire s e m a (col c)
+pSwitch route col sig continue  =
+  let pSwitch' col sig = mkGen $ \ds a -> do
+        col' <- mapM (\(x,w) -> stepWire w ds (Right x)) =<< route a col
+        let inhibit = any isLeft $ fmap fst col'
+            output = if inhibit then Left mempty else Right $ fmap ((\(Right x) -> x).fst) col'
+            wires = fmap snd col'
+        (eitherEvt,sig') <- stepWire sig ds (fmap (a,) output)
+        return ( (,) <$> output <*> (fmap (continue wires) <$> eitherEvt), pSwitch' wires sig' )
+  in switch $ pSwitch' col sig
+
+dpSwitch :: (Monad m , Monoid s,Traversable col, Foldable col,Monoid e) =>
+           (forall sf. a -> col sf -> m (col (b, sf))) ->
+           col (Wire s e m b c) ->
+           Wire s e m (a, col c) (Event evt) ->
+           (col (Wire s e m b c) ->  evt -> Wire s e m a (col c)) ->
+           Wire s e m a (col c)
+dpSwitch route col sig continue  =
+  let pSwitch' col sig = mkGen $ \ds a -> do
+        col' <- mapM (\(x,w) -> stepWire w ds (Right x)) =<< route a col
+        let inhibit = any isLeft $ fmap fst col'
+            output = if inhibit then Left mempty else Right $ fmap ((\(Right x) -> x).fst) col'
+            wires = fmap snd col'
+        (eitherEvt,sig') <- stepWire sig ds (fmap (a,) output)
+        return ( (,) <$> output <*> (fmap (continue wires) <$> eitherEvt), pSwitch' wires sig' )
+  in dSwitch $ pSwitch' col sig
+
+--removes wires upon inhibition but is otherwise identical to pSwitch
+ipSwitch :: (Monad m , Monoid s, Monoid e) =>
+           (forall sf. a -> [sf] -> m [(b, sf)]) ->
+           [Wire s e m b c] ->
+           Wire s e m (a, [c]) (Event evt) ->
+           ([Wire s e m b c] ->  evt -> Wire s e m a [c]) ->
+           Wire s e m a [c]
+ipSwitch route col sig continue  =
+  let pSwitch' col sig = mkGen $ \ds a -> do
+        col' <- mapM (\(x,w) -> stepWire w ds (Right x)) =<< route a col
+        let output =Right $ fmap (\(Right x) -> x) $ filter isRight $ map fst col'
+            wires = fmap snd col'
+        (eitherEvt,sig') <- stepWire sig ds (fmap (a,) output)
+        return ( (,) <$> output <*> (fmap (continue wires) <$> eitherEvt), pSwitch' wires sig' )
+  in switch $ pSwitch' col sig
+
+dipSwitch :: (Monad m , Monoid s, Monoid e) =>
+           (forall sf. a -> [sf] -> m [(b, sf)]) ->
+           [Wire s e m b c] ->
+           Wire s e m (a, [c]) (Event evt) ->
+           ([Wire s e m b c] ->  evt -> Wire s e m a [c]) ->
+           Wire s e m a [c]
+dipSwitch route col sig continue  =
+  let pSwitch' col sig = mkGen $ \ds a -> do
+        col' <- mapM (\(x,w) -> stepWire w ds (Right x)) =<< route a col
+        let col'' =  filter (isRight.fst) col'
+            output =Right $ fmap (\(Right x) -> x) $ map fst col''
+            wires = map snd col''
+        (eitherEvt,sig') <- stepWire sig ds (fmap (a,) output)
+        return $ ( (,) <$> output <*> (fmap (continue wires) <$> eitherEvt), pSwitch' wires sig' )
+  in dSwitch $ pSwitch' col sig 

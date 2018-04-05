@@ -1,5 +1,6 @@
 {-#LANGUAGE TemplateHaskell, TypeFamilies, FlexibleInstances, FlexibleContexts,
-            UndecidableInstances, DataKinds, PolyKinds, ScopedTypeVariables, FunctionalDependencies, RankNTypes #-}
+            UndecidableInstances, DataKinds, PolyKinds, ScopedTypeVariables,
+            FunctionalDependencies, RankNTypes, TypeOperators #-}
 {- This module consists of reimplementatins and modifications of things from the HList package (https://hackage.haskell.org/package/HList) .
    I was having difficulty getting it to work with my dependencies when I started this project.  It has since been updated to
    work with modern GHC
@@ -8,6 +9,8 @@ module HList where
 
 import Control.Lens hiding (Contains)
 import Data.Typeable
+import Control.DeepSeq
+import Data.Monoid (( <> ))
 
 type family TEq a b :: Bool where
   TEq a a = 'True
@@ -15,7 +18,30 @@ type family TEq a b :: Bool where
 
 data family Id a
 
-data Signal c = Signal{_target::Maybe (TypeRep,Int),_payload::c}
+newtype EntityId = EntityId (TypeRep,Int) deriving (Show)
+
+idType :: EntityId -> TypeRep
+idType (EntityId (t,_)) = t
+
+idVal :: EntityId -> Int
+idVal (EntityId (_,i)) = i
+
+instance Eq EntityId where
+  (EntityId (t1,v1)) == (EntityId (t2,v2)) =
+    (t1 == t2) && ((v1 == v2) || (v1<=0 && v2<=0))
+
+instance Ord EntityId where
+  compare (EntityId (t1,v1)) (EntityId (t2,v2)) =
+         compare t1 t2 <>
+             if (v1<=0 && v2<=0)
+                then EQ
+                else compare v1 v2
+
+instance NFData EntityId where
+  rnf d@(EntityId val) = d `seq` rnf val
+
+
+data Signal c = Signal{_target::Maybe EntityId,_payload::c}
 makeLenses ''Signal
 
 instance Functor Signal where

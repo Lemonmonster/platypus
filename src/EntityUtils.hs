@@ -192,7 +192,7 @@ getIds x =
                             (\x -> mkGen_ (\ents -> do
                                             (EntIndex i) <- get
                                             put (EntIndex $ i + x)
-                                            return $ Right (ents ++ map (typeRep (Proxy :: Proxy a),) [i..i+x])
+                                            return $ Right (ents ++ map (\x -> EntityId (typeRep (Proxy :: Proxy a),x)) [i..i+x])
                             ) >>> now >>> hold)
                           <$> mergeL evt e)
     returnA -< ents
@@ -241,7 +241,7 @@ mkObject create destroy =
                            | otherwise -> ((a^?!ident,a):lst,i)
                 (Create (Event a)) -> ((a^?!ident,a):lst,i)
                 (CNoId (Event f)) ->
-                  let id = (typeRep (Proxy :: Proxy a),i)
+                  let id = EntityId (typeRep (Proxy :: Proxy a),i)
                   in  ((id, f id):lst ,i+1)
                 _ -> (lst,i)
               ) ([],i') $ map _payload creates

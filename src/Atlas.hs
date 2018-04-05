@@ -99,7 +99,7 @@ instance Resource Atlas where
               let norm a = fromIntegral a /fromIntegral side
                   (x,y,w,h) = (norm x',norm y',norm w',norm h') :: (Float,Float,Float,Float)
               in x:y+h:x+w:y+h:x+w:y:x:y:lst
-            sprites = concat (map (\(s,a,im)-> snd $ mapAccumL (\i b@(_,_,w,h)->  ( i+1 , ((i+1,(s,b,im)),(w,h)) )) 0 (snd a)) animations)
+            sprites = concat (snd $ mapAccumL (\i (s,a,im)-> mapAccumL (\i b@(_,_,w,h)->  ( i+1 , ((i,(s,b,im)),(w,h)) )) i (snd a)) 0 animations)
             (positions,(side',_)) = packImages (\(x,y)->(x*2,y*2)) (side,side) sprites
             img = generateImage (\x y ->
               let sprite = find (\(_,(x',y',w,h))-> x>x' && x< x'+w && y>y' && y<y'+h ) positions
@@ -120,15 +120,15 @@ instance Resource Atlas where
                 ) ([], foldl' (\a b-> a + length b) 0 animationLists - 1) animationLists
             animationAssocList = map (\(s,(frameRate,_),_) ->
                   let (Just list) = find (\((n,_,_):xs) -> n==s) indexLists
-                  in (s,Animation frameRate (VG.fromList (map (\(_,i,_)->i) (sortBy (comparing (\(i,_,_)-> i)) list) )))
-                ) animations
+                  in (s,Animation frameRate (VG.fromList (map (\(_,_,i)->i) (sortBy (comparing (\(_,i,_)-> i)) list) )))
+                ) $ traceShow indexLists $ animations
         buffer <- listToBuffer 2 StaticDraw ToFloat Float frams
         print $ length frams
         writePng (name++".png") img
-        tex@(Renderer.Texture tname obj) <- return . Renderer.Texture (name++"AtlasTex") =<< imageToTexture img
+        tex@(Renderer.Texture tname obj) <- return . Renderer.Texture (name++"AtlasTex") =<< imageToTexture ( premultiply img )
         let r' = r & textures . at tname .~ Just tex
         ((Material mname texs uniforms attribs shader),r'') <- Renderer.get material r'
-        let out = Atlas name (Material mname (("uDiffuse",tex):texs) uniforms attribs shader) (Map.fromList animationAssocList) buffer
+        let out = Atlas name (Material mname (("uDiffuse",tex):texs) uniforms attribs shader) (Map.fromList $ traceShowId animationAssocList) buffer
         return (out,r'' & atlases . at name .~ Just out)
   bind r Atlas{_aMaterial = m} = bind r m
   subResources a = [RO (get (a^.aMaterial.mName) :: Getter Material)]

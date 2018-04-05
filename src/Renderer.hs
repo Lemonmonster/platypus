@@ -174,6 +174,10 @@ data ResourceObject = forall a. (Resource a) => RO (Getter a)
 instance Show ResourceObject where
   show = const "ResourceObject"
 
+
+
+
+
 class Resource a where
   identifier :: a -> (String,String) -- type and id
   get  :: String -> Renderer -> IO (a,Renderer)
@@ -197,6 +201,14 @@ data DrawableObject = DrawableObject {
   z :: Int
 }
 
+drawNothing :: DrawableObject
+drawNothing =
+  DrawableObject
+     (return . id)
+     []
+     (const $ return ())
+     minBound
+     
 instance Show DrawableObject where
   show (DrawableObject _ r _ z) = "(ResourceObject <function> "++show r++" <function> "++show z++")"
 
@@ -204,6 +216,12 @@ class Drawable a where
   toDrawableObject :: a -> DrawableObject
   toDrawableObject _ = DrawableObject return [] (const $ return ()) 0
 
+instance (Drawable a, Foldable f) => Drawable (f a) where
+  toDrawableObject foldable =
+    foldl (\(DrawableObject r s d z) x ->
+             let (DrawableObject r' s' d' z') = tdo x
+             in  (DrawableObject (r' <=< r) (s') (liftA2 (<>) d d') (max z z'))
+          ) drawNothing foldable
 tdo :: (Drawable d) => d -> DrawableObject
 tdo = toDrawableObject
 
@@ -222,9 +240,6 @@ identityM44 =
 render :: Renderer -> Float-> [DrawableObject] -> IO Renderer
 render r dt drawables = do
   cullFace $= Nothing
-  depthFunc $= Just Lequal
-  blend $= Enabled
-  blendFunc $= (SrcAlpha,OneMinusSrcAlpha)
   r' <- (\ r -> return $ r & delta .~ dt) =<< foldM (flip setup) r drawables
   let (Transform centr dim o) = r'^.viewport.trans
       mat = convertTransform (Transform (-centr) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Double)

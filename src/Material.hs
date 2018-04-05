@@ -4,7 +4,7 @@
 module Material where
 
 import Renderer
-import Graphics.Rendering.OpenGL hiding (Color,Texture,get,viewport)
+import Graphics.Rendering.OpenGL hiding (Color,Texture,get,viewport,pixelMap)
 import qualified Graphics.Rendering.OpenGL as GL
 import Codec.Picture
 import qualified Data.Map.Strict as Map
@@ -111,6 +111,13 @@ imageToTexture (Image w h v) =
     return tex
    )
 
+premultiply :: Image PixelRGBA8 -> Image PixelRGBA8
+premultiply = pixelMap (\(PixelRGBA8 r g b a)->
+    let mult x =
+         let x' = round $  fromIntegral x * fromIntegral a / (255 :: Double)
+         in  x'
+    in PixelRGBA8 (mult r) (mult g) (mult b) a
+  )
 
 --TODO guarantee texture as dimensions that are powers of two
 instance Resource Texture where
@@ -123,7 +130,7 @@ instance Resource Texture where
           image <- readImage file
           (case image of
             (Right dimage) -> do
-                    let image' = convertRGBA8 dimage
+                    let image' = premultiply $ convertRGBA8 dimage
                     t <- return . Renderer.Texture name =<< imageToTexture image'
                     return (t,r & textures . at name .~ Just t)
             (Left s) -> error ("error loading texture "++file++": "++s)

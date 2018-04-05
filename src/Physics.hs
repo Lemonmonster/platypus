@@ -650,7 +650,7 @@ instance EntityW '[Delayed PhysSim] '[Destroy, Create Struct.Constraint, Create 
         let createVals = map fromEvent $ filter occurred creates
             convInf x = if x == 1/0 then infinity else x
             (updates,ucreates) = partition ((`M.member` bodies).(^?!ident))  bodyUpdates
-            (id',localCreates) = mapAccumL (\i f -> (i+1,f (physSim,i))) id $ map fromEvent $ filter occurred  createWId
+            (id',localCreates) = mapAccumL (\i f -> (i+1,f $ EntityId (physSim,i))) id $ map fromEvent $ filter occurred  createWId
             createdBodies = map (\body-> (body^?!ident,
               let convertedShapes = map (\(BodyShape shp fric group layer rest mass svel)->
                       let doShape shp' = do
@@ -887,7 +887,7 @@ instance EntityW '[Delayed PhysSim] '[Destroy, Create Struct.Constraint, Create 
                     (c',a) <- convert c
                     return (mp & at (c^?!ident) .~ Just (c',a),id)
                  (CNoId (Event f)) -> do
-                    let eid = (physSim,id)
+                    let eid = EntityId (physSim,id)
                     (c,a) <- convert (f eid)
                     return (mp & at eid .~ Just (c,a),id+1)
                  (Update c) ->

@@ -3,13 +3,13 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE Arrows #-}
-{-# LANGUAGE Strict #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Graphics where
 
 import Control.Applicative
-import Control.Lens ((^.))
+import Control.Lens ((^.),makeLenses)
 import Control.Monad
 import Data.Maybe
 import Data.Typeable
@@ -21,6 +21,7 @@ import Graphics.Rendering.OpenGL as GL hiding (scale, viewport)
 import Input
 import Linear.V2
 import Linear.V4
+import Linear ((^*))
 import Prelude hiding ((.), id)
 import Renderer
 import SDL.Video hiding (Renderer, viewport)
@@ -30,6 +31,7 @@ import System.Mem
 import TextBlock
 import TextBlock
 import Wires hiding (when)
+import Data.List (find)
 
 red :: V4 Float
 red = V4 1 0 0 1
@@ -65,6 +67,36 @@ tdos = toDrawableObjects
 
 drawW :: (Typeable a,HasId a,Visible a,Monad m) =>  Wire s e m ([a],SignalL ls) ([a],SignalL (DrawableObject ': ls))
 drawW  = signalConcat_ tdos
+
+data Trackable = Trackable{
+    _tid :: EntityId,
+    _tShape :: PhysShape
+}
+makeLenses ''Trackable
+newtype CameraEvent = Focus (Event EntityId)
+newtype Camera = Camera Transform
+
+instance EntityW '[Renderer] '[Trackable,CameraEvent] Camera '[] where
+  wire = switch $ proc ([renderer] `ECons` ENil,_) -> do
+    evt <- ( arr $ fmap (\startRenderer ->
+         let (Transform spos sscale sorient) = startRenderer^.viewport.trans
+             spring target curr = ((target - curr)/2)**2
+         in proc ([currRenderer] `ECons` ENil ,trackables `SCons` evts `SCons` SNil) -> do
+               track <- rSwitch $ mkConst (Right Nothing) -<
+                  ((), mkConst . Right . Just <$> signalToEvent  (\(Focus id)-> Just id) const evts)
+               let (Just target) = (case track of
+                               Just t -> (^.tShape.trans) <$> find (\t1 -> t1^.tid == t) (map _payload trackables)
+                               Nothing -> Nothing
+                            )
+                                <|>
+                            Just (currRenderer^.viewport.trans)
+               rec posO <- integral spos . arr (uncurry spring) . delay (spos,spos)  -< (target^.translation,posO)
+               rec scaleO <- integral (sscale^._y) . arr (uncurry spring) . delay (sscale^._y,sscale^._y)  -< (target^.scale._y,scaleO)
+               rec orientO <- integral sorient . arr (uncurry spring) . delay (sorient,sorient)  -< (target^.orientation,orientO)
+               returnA -< renderer  `seq` ([Camera (Transform posO (sscale ^* (scaleO/sscale^._y)) orientO)],SNil)
+              )) . now -< renderer
+    returnA -< (([],SNil),evt)
+
 
 
 instance EntityW '[Delayed Renderer, WindowSize, Window] '[DrawableObject] Renderer '[] where

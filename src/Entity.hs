@@ -1,16 +1,17 @@
-{-#LANGUAGE MultiParamTypeClasses #-}
-{-#LANGUAGE GADTs #-}
-{-#LANGUAGE DataKinds #-}
-{-#LANGUAGE KindSignatures #-}
-{-#LANGUAGE TypeOperators #-}
-{-#LANGUAGE TemplateHaskell #-}
-{-#LANGUAGE Arrows #-}
-{-#LANGUAGE FunctionalDependencies #-}
-{-#LANGUAGE FlexibleInstances #-}
-{-#LANGUAGE TupleSections #-}
-{-#LANGUAGE FlexibleContexts #-}
-{-#LANGUAGE OverloadedLists #-}
-{-#LANGUAGE TypeFamilies #-}
+{-# LANGUAGE Arrows                 #-}
+{-# LANGUAGE DataKinds              #-}
+{-# LANGUAGE FlexibleContexts       #-}
+{-# LANGUAGE FlexibleInstances      #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE GADTs                  #-}
+{-# LANGUAGE KindSignatures         #-}
+{-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE OverloadedLists        #-}
+{-# LANGUAGE TemplateHaskell        #-}
+{-# LANGUAGE TupleSections          #-}
+{-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE TypeOperators          #-}
+{-# LANGUAGE LambdaCase #-}
 module Entity (
   EntityW,
   wire,
@@ -24,26 +25,23 @@ module Entity (
   module HList
 )where
 
-import Prelude hiding ((.), id)
-import Control.Wire hiding (at,when,unless)
-import Control.Lens
-import Language.Haskell.TH
-import Control.Arrow
-import qualified Data.Map.Strict as M
-import Data.Function (fix)
-import Data.List
-import Data.Maybe
-import qualified Data.Set as S
-import Data.Ord (comparing)
-import Control.Monad.State
-import Control.Monad.Fix (mfix)
-import Data.Void
-import Debug.Trace
-import Data.Typeable
-import System.IO
-import Text.Regex.PCRE
-import Text.Regex
-import HList
+import           Control.Lens
+import           Control.Monad.State
+import           Control.Wire        hiding (at, unless, when)
+import           Data.Function       (fix)
+import           Data.List
+import qualified Data.Map.Strict     as M
+import           Data.Maybe
+import qualified Data.Set            as S
+import           Data.Typeable
+import           Debug.Trace
+import           HList
+import           Language.Haskell.TH
+import           Prelude             hiding (id, (.))
+import           System.IO
+import           Text.Regex
+import           Text.Regex.PCRE
+import Control.DeepSeq hiding (force)
 
 class EntityW (ine :: [*]) (ins:: [*]) oute (outs :: [*]) | oute -> ine ins outs where
   wire :: Wire (Timed NominalDiffTime ()) () IO (EntityL ine,SignalL ins) ([oute],SignalL outs) -- (feedback, entities in, signal in) (entities out, signal out)
@@ -64,14 +62,18 @@ data EType =
       Delayed EType |
       Ent Type deriving (Eq,Ord)
 isSig (Sig x) = True
-isSig _ = False
+isSig _       = False
+isDelay (Delayed _ ) = True
+isDelay _            = False
+unDelay (Delayed x) = x
+unDelay x           = x
 
 simplifyTypes s = subRegex (makeRegex "\\s* ") (subRegex (makeRegex "(\\w+\\.)*(\\w+)") s "\\2") " "
 
 instance Show EType where
-  show (Sig t) = simplifyTypes $ pprint t
-  show (Ent t) = simplifyTypes $ pprint t
-  show (Delayed x) = show x
+  show (Sig t)     = simplifyTypes ( pprint t )
+  show (Ent t)     = simplifyTypes ( pprint t )
+  show (Delayed x) = "Delayed " ++ show x
 
 type WireType = ([EType],[EType],EType,[EType])
 data WireExpr =
@@ -93,9 +95,8 @@ instance Show WireExpr where
   show (WDelay _ _) = "WDelay"
 
 fromJust' (Just x) = x
-fromJust' Nothing = error "fromJust' there was nothing"
+fromJust' Nothing  = error "fromJust' there was nothing"
 
-type EntityId = (TypeRep,Int)
 
 class HasId a where
   ident::Traversal' a EntityId
@@ -153,7 +154,7 @@ generateNetwork :: Q Exp
 generateNetwork = do
   (ClassI dec instances) <- reify $ mkName "EntityW"
   let toList (SigT (AppT (AppT _ x ) xs) _) = x : toList xs
-      toList (SigT PromotedNilT _ ) = []
+      toList (SigT PromotedNilT _ )         = []
       --should help match type aliases
       toNormalForm (AppT  x  xs)   = do
          t <- toNormalForm x
@@ -163,7 +164,7 @@ generateNetwork = do
         val <- reify name
         case val of
           (TyConI (TySynD _ _ t)) -> toNormalForm t
-          _ -> return (ConT name)
+          _                       -> return (ConT name)
       toNormalForm (SigT t s) = (`SigT` s) <$> toNormalForm t
       toNormalForm ListT = return ListT
       toNormalForm (TupleT i) = return (TupleT i)
@@ -180,18 +181,10 @@ generateNetwork = do
       return (ein', sigin', eout', sout')
     ) instances
   let toWireExpression w@(wein,wsin,weout,wsout) = --adds self recursion
-          let isDelay (Delayed _ ) = True
-              isDelay _ = False
-              unDelay (Delayed x) = x
-              unDelay x = x
-              delayed = filter isDelay wein
-              wr@(WR tin tout _) = WR (S.fromList $ map unDelay wein ++ wsin) (S.fromList $ weout:wsout) w
-              wr' = WApp tin tout wr (WPass tout tout (tout `S.difference` S.fromList wsout) (WDelay (S.fromList wsout) (S.fromList wsout)))
-              delayedSet = S.fromList $ map unDelay delayed
-              wr'' = if null delayed then wr' else WApp tin tout (WPass tin tin (tin `S.difference` delayedSet) (WDelay delayedSet delayedSet)) wr'
+          let delayed = filter isDelay wein
+              wr@(WR tin tout _) = WR (S.fromList $  wein ++ map Delayed wsin) (S.fromList $ weout:wsout) w
           in do
-           --runIO (print $ "d " ++ show delayed ++ " "  ++ show wein)
-           return $ wr -- if S.null (tin `S.intersection` tout) then wr'' else WRec tin tout (tin `S.intersection` tout) wr''
+           return wr
   expressions <- mapM toWireExpression types
   let goesTo = foldl' (\m a->
          S.foldl' (\m v -> m & at v %~ (Just . S.insert a. fromMaybe S.empty)) m (a^.tin)
@@ -200,13 +193,13 @@ generateNetwork = do
           S.foldl' (\m v -> m & at v %~ (Just . S.insert a. fromMaybe S.empty)) m (a^.tout)
         ) M.empty expressions :: M.Map EType (S.Set WireExpr)
       isEnt (Ent _) = True
-      isEnt _ = False
+      isEnt _       = False
       getEin x =
         let f (WR _ _ (ein,_,_,_)) = Just ein
-            f (WDelay _ _) = Nothing
-            f (WPass _ _ _ x) = f x
-            f (WRec _ _ _ x) = f x
-            f (WApp _ _ l r) = f l <|> f r
+            f (WDelay _ _)         = Nothing
+            f (WPass _ _ _ x)      = f x
+            f (WRec _ _ _ x)       = f x
+            f (WApp _ _ l r)       = f l <|> f r
         in fromJust (f x)
       isRoot e = not $ any isEnt (getEin e)
       (root:lst,rest) =  if any isRoot expressions then partition isRoot expressions else error "no possible root wire"
@@ -221,53 +214,70 @@ generateNetwork = do
                 outputs' = outputs `S.union` (S.foldl (S.union) S.empty $ S.map (S.filter isEnt.(^.tout)) nextLevel)
             in if S.null nextLevel then error ("illegal cycle detected "++show open'++" "++show outputs) else f (nextLevel:l) outputs' open'
         ) [] (S.filter isEnt (root ^.tout)) open
+      -- (all the inputs of this and later levels, all the outputs of this and previous levels )
       inputs = fix (\f l ->
         let getIn x = S.foldl S.union S.empty (S.map (^.tin) x)
             getOut x =  S.foldl S.union S.empty (S.map (^.tout) x)
         in case l of
-              [x] -> [(getIn x,getOut x)]
+              [x] -> [(getIn x, getOut x)]
               x:xs ->
-                let l@((tin,tout):_) =  f xs
-                in (getIn x `S.union` tin,getOut x `S.union` tout):l
-            ) tree
+                let ls@((tin,tout):_) = f xs
+                in  (getIn x `S.union` tin,getOut x `S.union` tout):ls
+            ) tree 
       wireExpression = fix (\ f e t ->
           let pass e s = if S.null s then e else
                 WPass ((e^.tin) `S.union` s) ((e^.tout) `S.union` s) s e
+              --special intersection operation that includes signals in the second set if
+              --delayed signals exist in the first set
+              --this is not a true intersection
+              intersection' s1 s2 =
+                S.filter (\x ->
+                       Delayed x `S.member` s1 || x `S.member` s1
+                   ) s2
+              intersection2' s1 s2 =
+                S.filter (\case
+                      Delayed x ->   x `S.member` s2
+                      x -> x `S.member` s2
+                   ) s1
+              difference' s1 s2 =
+                S.filter (\case
+                      Delayed x -> not $ x `S.member` s2
+                      x -> not $ x `S.member` s2
+                   ) s1 
           in case t of
-              [(x,(typesIn,typesOut))] ->
+              [(x,_)] ->
                 let xs = S.toList x
                     x' = WAnd  (foldl1' S.union $ map (^.tin) xs)
                                 (foldl1' S.union $ map (^.tout) xs)
                                 xs
-                    passValsF = (e^.tin) `S.intersection` (e^.tout)
+                    passValsF = intersection' (e^.tin) (e^.tout) `S.union` S.intersection (x'^.tout) (e^.tout)
                     passValsB = (x'^.tin) `S.difference` (e^.tout)
                     e' = pass e passValsB
                     x'' = pass x' passValsF
                     expr = WApp (e'^.tin) (x''^.tout) e' x''
-                    recVals = (expr^.tin) `S.intersection` (expr^.tout)
+                    recVals = intersection2' (expr^.tin)  (expr^.tout)
                 in if S.null recVals then
                       expr
                     else
-                      WRec ((expr^.tin) `S.difference` (expr^.tout)) (expr^.tout) recVals expr
-              (x,(i,o)):rest@((_,(i',o')):_ )->
+                      WRec (difference' (expr^.tin) (expr^.tout)) (expr^.tout) recVals expr
+              (x,(i,_)):rest@((_,(i',o')):_)->
                 let xs = S.toList x
                     x' = WAnd  (foldl1' S.union $ map (^.tin) xs)
                                 (foldl1' S.union $ map (^.tout) xs)
                                 xs
-                    passValsF = ((e^.tin) `S.intersection` (e^.tout)) `S.union` (i' `S.intersection` (e^.tout))
-                    passValsB = (i `S.difference` (e^.tout)) `S.union` (S.filter isSig (x'^.tin) `S.intersection` o)
+                    passValsF = (intersection' (e^.tin) (e^.tout)) `S.union` (intersection' i' (e^.tout)) `S.union` (S.intersection o' (e^.tout))
+                    passValsB = ((x'^.tin) `S.difference` (e^.tout)) --`S.union` (S.filter (liftA2 (||) isDelayedSig isSig) (x'^.tin) `S.intersection` o)
                     e' = pass e passValsB
                     x'' = pass x' passValsF
                     expr = WApp (e'^.tin) (x''^.tout) e' x''
-                    recVals = ((expr^.tin) `S.intersection` (expr^.tout)) `S.difference` i'
+                    recVals = difference' (S.difference (intersection2' (expr^.tin) (expr^.tout)) i') o' 
                     efinal =
                        if S.null recVals then
-                          expr
+                           expr
                         else
-                           WRec (expr^.tin) ((expr^.tout) `S.difference` recVals) recVals expr
-                in f efinal rest
+                           WRec (S.difference (expr^.tin) recVals) (S.difference (expr^.tout) recVals) recVals expr
+                in  {- trace ("xin " ++ show (x'^.tin)) $ -} f efinal rest 
         ) root (zip tree inputs)
-
   let intersperseE :: Exp -> [Exp] -> Exp
       intersperseE name = foldl1' (\e expr -> UInfixE e name expr)
       intersperseP :: Name -> [Pat] -> Pat
@@ -309,42 +319,55 @@ generateNetwork = do
           lnames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList typesIn)
           recNames <- mapM (\t -> (t,) <$> newName "rec") recTypes
           let names = lnames ++ recNames
+          -- runIO $ do
+          --   putStrLn "wrec report start"
+          --   print typesIn
+          --   print typesOut
+          --   print (expr^.tin)
+          --   print (expr^.tout)
+          --   print recNames
+          --   putStrLn "wrec report end"
           return $ VarE 'arr `AppE` ParensE (
               LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd) lnames, TildeP $ TupP $ map (VarP . snd) recNames]]
-                   (TupE $ map (\t-> intersperseE (VarE '(++)) $ map (VarE . snd) $ filter ((==t).fst) names) (S.toList (expr^.tin)))
+                   (TupE $ map (\t-> VarE $ fromJust $ lookup t recNames <|> lookup t lnames ) (S.toList (expr^.tin)))
             )
         rarrow <- do
           names <- mapM (\t -> (t,) <$> newName "valIn") (S.toList (expr^.tout))
           return $ VarE 'arr `AppE` ParensE (
               LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd) names]]
-                   (TupE [TupE $ map (VarE .fromJust.(`lookup` names)) (S.toList typesOut),TupE $ map (VarE .fromJust'.(`lookup` names)) recTypes])
+                   (TupE [TupE $ map (VarE .fromJust.(`lookup` names)) (S.toList typesOut),
+                          TupE $ map (VarE .fromJust'.(`lookup` names).(\case  Delayed a-> a; x->x;)) recTypes
+                         ])
             )
         return $
           VarE 'loop `AppE` ParensE (ParensE (UInfixE larrow (VarE '(>>>)) (UInfixE expr' (VarE '(>>>)) rarrow)))
       convertToExpression (WR tin tout (entIn,sigIn,entOut@(Ent entityTypeOut),sigOut)) = do
           --runIO $ print "WR"
-          let isDelay (Delayed _ ) = True
-              isDelay _ = False
-              unDelay (Delayed x) = x
-              unDelay x = x
-              delayedSet = S.fromList $  map unDelay (filter isDelay entIn) ++ sigIn
-              undelayedSet = S.difference tin delayedSet
+          let delayedSet = S.fromList $  map unDelay (filter isDelay entIn) ++ map unDelay sigIn
+              undelayedSet = S.difference (S.map unDelay tin) delayedSet
+              tin' = S.map unDelay tin
+          runIO $ do
+            print "WR start"
+            print delayedSet
+            print undelayedSet
+            print "WR End"
           dArrow <- do
             inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin)
+            inNames' <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin')
             delayedSetNames <- mapM (\t -> (t,) <$> newName "valDelayed") (S.toList delayedSet)
             undelayedSetNames <- mapM (\t -> (t,) <$> newName "valUndelayed") (S.toList undelayedSet)
             return $ UInfixE (UInfixE (VarE 'arr `AppE` ParensE (
               LamE [TildeP $ TildeP $ TupP (map (VarP . snd ) inNames)]
               (
-                TupE [TupE (map (VarE . fromJust.(`lookup` inNames)) (S.toList delayedSet)),
+                TupE [TupE (map (VarE . fromJust.( liftA2 (<|>) ( (`lookup` inNames).Delayed) (`lookup` inNames) )) (S.toList delayedSet)),
                       TupE (map (VarE . fromJust.(`lookup` inNames)) (S.toList undelayedSet))]
               )
               )) (VarE '(>>>)) (VarE 'first `AppE` ParensE (VarE 'delay `AppE` TupE (map (const (ListE [])) (S.toList delayedSet)))))
                (VarE '(>>>)) (VarE 'arr `AppE` LamE [TildeP $ TupP [TildeP $ TupP $ map (VarP . snd ) delayedSetNames,TildeP $ TupP $ map (VarP . snd ) undelayedSetNames]]
-                                 (TupE $ map (VarE.(\x-> fromJust (lookup x delayedSetNames <|> lookup x undelayedSetNames))) (map fst inNames))
+                                 (TupE $ map (VarE.(\x-> fromJust (lookup x delayedSetNames <|> lookup x undelayedSetNames))) (map fst inNames'))
                )
           larrow <- do
-            inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin)
+            inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin')
             --filterExp <- [|filter (maybe True (== typeRep (Proxy :: Proxy $(return entityTypeOut)).fst))|]
             let toEntListExpression (Delayed x) = ParensE (VarE 'map `AppE` ConE 'D `AppE` toEntListExpression x)
                 toEntListExpression x = VarE (fromJust (lookup x inNames))
@@ -364,8 +387,8 @@ generateNetwork = do
               )) (VarE '(>>>)) (VarE 'force)
           t <- [t|Wire (Timed NominalDiffTime ()) () IO|]
           let fromEnt (Delayed x) = ConT ''Delayed `AppT` fromEnt x
-              fromEnt (Ent x) = x
-              fromEnt (Sig x ) = x
+              fromEnt (Ent x)     = x
+              fromEnt (Sig x )    = x
               toListType (x:xs) = AppT (AppT PromotedConsT (ParensT (fromEnt x))) (ParensT (toListType xs))
               toListType [] = PromotedNilT
               inTyp  = TupleT 2 `AppT` AppT (ConT ''EntityL) (toListType entIn) `AppT` AppT (ConT ''SignalL)  (toListType sigIn)
@@ -438,6 +461,9 @@ generateNetwork = do
     --print.pprint $ SigT (AppT  (AppT PromotedConsT  (VarT x)) PromotedNilT) (AppT ListT StarT)
     --print $ pprint $ (UInfixE (VarE x) (VarE '(+)) (UInfixE (VarE x) (VarE '(+)) (VarE x)))
     --print $ pprint $ UInfixE (UInfixE (VarE x) (VarE '(+)) (VarE x)) (VarE '(+)) (VarE x)
+    print "danglers"
+    print (wireExpression ^. tin) 
+    print (wireExpression ^. tout) 
     hFlush stdout-- flush buffer
     return ()
   --runIO (print $ head types)

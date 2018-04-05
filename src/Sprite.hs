@@ -93,7 +93,7 @@ instance Drawable Sprite where
       setUniform prog "uMVMatrix" =<< toGlmatrix ((convertTransform $ sprite^.shape.trans :: M44 Double)& _z._w.~fromIntegral (sprite^.zIndex))
       maybe (return ()) (\attrib -> do
           bindBuffer ArrayBuffer $= Just buffer
-          vertexAttribPointer attrib $= (ih,VertexArrayDescriptor c d s (plusPtr (nullPtr:: Ptr Word8) (8*4*fram)))
+          vertexAttribPointer attrib $= (ih,VertexArrayDescriptor c d s (plusPtr (nullPtr:: Ptr Word8) (4*2*4*indx)))
         )  (prog^.attributes.at "aTexCoord")
       drawArrays Quads 0 4
   }
