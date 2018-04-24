@@ -11,6 +11,7 @@ import Control.Lens hiding (Contains)
 import Data.Typeable
 import Control.DeepSeq
 import Data.Monoid (( <> ))
+import Control.Applicative
 
 type family TEq a b :: Bool where
   TEq a a = 'True
@@ -46,6 +47,10 @@ makeLenses ''Signal
 
 instance Functor Signal where
   fmap f s@(Signal _ p) = s{_payload= f p}
+
+instance Applicative Signal where
+  pure = Signal Nothing
+  (Signal r f) <*> (Signal r' a) = Signal (r <|> r') (f a)
 
 sigify :: [a] -> [Signal a]
 sigify = map $ Signal Nothing

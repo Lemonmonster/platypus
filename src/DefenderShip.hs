@@ -4,7 +4,10 @@
 {-# LANGUAGE StrictData #-}
 module DefenderShip (
   Ship,
-  newShip
+  Projectile,
+  newShip,
+  ship,
+  projectile
 )
 
 where
@@ -35,6 +38,7 @@ import Data.Function (fix)
 
 data Projectile = Projectile {_dynGeo::DynamicGeom} deriving (Typeable,Show)
 makeLenses ''Projectile
+projectile = typeRep (Proxy :: Proxy Projectile)
 
 newProjectile x v i =
   let shp = newCircle x 10
@@ -60,6 +64,7 @@ instance EntityW [DynamicGeom, M.Map (Maybe EntityId) (Event [Collision])]
 
 data Ship = Ship{_sSprite::Sprite,_obj::Body} deriving (Show,Typeable)
 makeLenses ''Ship
+ship = typeRep (Proxy :: Proxy Ship)
 
 instance Visible Ship where
   toDrawableObjects s = [tdo (s ^. sSprite)]
@@ -71,6 +76,13 @@ instance HasId Ship where
   ident = obj.ident
 instance Manager Ship
 
+instance Bodied Ship where
+  body = obj
+
+instance Poseable Ship where
+  pos = body.pos
+  angle = body.angle
+
 newShip :: V2 Double -> EntityId -> Ship
 newShip x i =
   let shape = newCircle x 50
@@ -80,7 +92,7 @@ newShip x i =
 velocity = 500 :: Double
 acceleration = 1000 :: Double
 
-instance EntityW '[Keyboard,M.Map EntityId Body] '[Create Ship,Destroy] Ship '[Create Body,DrawableObject,Create Projectile] where
+instance EntityW '[Keyboard,M.Map EntityId Body] '[Create Ship,Destroy] Ship '[Trackable,Create Body,CameraEvent,DrawableObject,Create Projectile] where
   wire =
     let key ::(Monad m) => V2 Double -> Scancode -> Wire s e m (Scancode -> Bool) (V2 Double)
         key vel code = arr (bool 0 vel . ($ code))
@@ -88,6 +100,7 @@ instance EntityW '[Keyboard,M.Map EntityId Body] '[Create Ship,Destroy] Ship '[C
           e <- now -< (newShip 0)
           returnA -< (a,(Signal Nothing (CNoId e):sig) `SCons` r)
     in start >>> mkObject ( \ship -> proc ([Keyboard pressed] `HCons` [obj] `HCons` HNil,HNil) -> do
+        cameraEvt <- arr Focus . now -< ship^?!ident
         acc <- arr (\v-> if v ==0 then 0 else signorm v ^* DefenderShip.velocity) <<<
           key (V2 1 0) ScancodeD + key (V2 -1 0) ScancodeA +
           key (V2 0 -1) ScancodeS + key (V2 0 1) ScancodeW -< pressed
@@ -131,7 +144,9 @@ instance EntityW '[Keyboard,M.Map EntityId Body] '[Create Ship,Destroy] Ship '[C
                           (\ lst x -> f (x:lst))
                       )) [] -< (flareEvt)
         returnA -< (Ship sprt (bdy & aVel.~aVel'),
+                    sigify [cameraEvt] `SCons`
                     sigify (tdo flames : toDrawables bdy (hEnd $ hBuild sprt :: HList '[Sprite])) `SCons`
                     sigify [CNoId $ (newProjectile (pVec * 35 + obj^.pos ) (pVec * 1000) ) <$ proj] `SCons` SNil))
               (const mempty)
-              >>>  signal_ (Update . (^.obj))
+              >>>  signal_ (Update . (^.obj)) >>>
+              signal_ ((\s -> Trackable (s^?!ident) (OBB $ Transform (s^.obj.pos) (s^.shape.trans.scale * 8) 0)))

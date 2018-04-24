@@ -11,12 +11,15 @@ import Prelude hiding ((.), id)
 import Control.Wire hiding (at,when,unless)
 import Entity
 import TestEntity
+import Barrell
 import Graphics
 import Input
 import SDL hiding (delay)
 import Physics
 import BasicGeometry
 import DefenderShip
+import SceneManager
+import Barrell
 
 network = $(generateNetwork)
 

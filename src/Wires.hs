@@ -32,7 +32,9 @@ randomW,
 randomRW,
 dragW,
 lift,
-signalToEvent
+signalToEvent,
+reDelay,
+reDelayBy
 )
 where
 import Control.Wire as ALL hiding (integral,integralWith,modes,alternate)
@@ -100,11 +102,19 @@ lowest =
   in mkSFN $ \x -> (x,lowest' x)
 
 lowestOver :: (Ord a,HasTime t s,Monoid e,Monad m) => t  -> Wire s e m a a
-lowestOver t  =
-  for t . lowest --> lowestOver t
+lowestOver t  = 
+  dSwitch  $ lowest &&& (arr ( lowestOver t <$) . ( for t . never  --> now))
 
 doOnce :: (Monoid e,Monoid s)=>Wire s e m a a
 doOnce = mkPure (\ _ a -> (Right a, inhibit mempty))
+
+--is the passed value now and the input value after now
+--does NOT delay the value
+reDelay :: (Monoid e , Monoid s, Monad m) => a -> Wire s e m a a
+reDelay a = mkPure (\ _ _ -> (Right a, id))
+
+reDelayBy :: (Monoid e , Monoid s, Monad m) => (b->a) -> Wire s e m (b,a) a
+reDelayBy f = mkPure (\ _ (b,_) -> (Right $ f b, arr snd))
 
 signal ::forall a m b s e sl. (Monad m,HasId a,Typeable a)=> Maybe EntityId -> (a -> b) -> Wire s e m ([a],SignalL sl) ([a],SignalL (b ': sl))
 signal target getter =arr $ \(vals,list) ->
@@ -131,8 +141,9 @@ dValWire a =
 
 
 eventToSignal :: Maybe EntityId -> (a -> b) -> Event [a] -> [Signal (Event b)]
-eventToSignal i f NoEvent = [Signal i NoEvent]
+eventToSignal i _ NoEvent = [Signal i NoEvent]
 eventToSignal i f (Event lst) = map (Signal i . Event . f) lst
+eventToSignal_ :: Event [a] -> [Signal (Event a)]
 eventToSignal_ = eventToSignal Nothing id
 
 signalToEvent :: (a -> Maybe (Event b)) -> (b -> b -> b) ->[Signal a] -> Event b

@@ -19,8 +19,6 @@ import Data.Char
 import SDL.Video.Renderer
 import Foreign.Storable
 import qualified SDL.Raw.Types as Raw
-import Linear.V4
-import Linear.V2
 import Graphics.Rendering.OpenGL hiding (get,index)
 import SDL.Video.Renderer
 import SDL.Vect
@@ -29,6 +27,8 @@ import qualified SDL.Raw.Types (Surface(..))
 import Foreign.C.String
 import Debug.Trace
 import Codec.Picture
+import Data.Word
+import Linear
 
 unicodeRanges :: Map.Map String (Int,Int)
 unicodeRanges =
@@ -179,7 +179,7 @@ instance Resource Renderer.Font where
              case metric of
                (Just (minx',maxx',miny',maxy',advance')) -> do
                  --print metric
-                 surf <- blendedGlyph font (V4 0 0 0 255) c
+                 surf <- blendedGlyph font (V4 0 0 0 255 :: SDL.Font.Color) c
                  --print =<< surfaceDimensions surf
                  (V2 w h)<- surfaceDimensions surf
                  return $ Just ((c,(Glyph (fromIntegral w) advance' (fromIntegral h) 0 ,surf)),(w,h))
@@ -188,12 +188,12 @@ instance Resource Renderer.Font where
         charSurfaces <- fmap catMaybes $ mapM renderChar chars
         let area = foldl' (\v (_,(w,h))-> v + (w*h)) 0 charSurfaces
             side = 2 ^ (ceiling (log (fromIntegral area)/log 4))
-            (charSurface',(side',_)) = packImages (\(x,y)->(x*2,y*2)) (side,side) charSurfaces
+            (charSurface',(side',_)) = packImages (\(x,y)->(x*2,y*2)) (side,side) 0 charSurfaces
         surface <- createRGBSurface (V2 side' side') ARGB8888
         surfaceFillRect surface Nothing (V4 0 0 0 0)
         mapM_ (\((_,(_,s)),(x,y,w,h))->
             surfaceBlit s Nothing surface (Just $ P $ V2 x y)
-          ) charSurface'
+          ) charSurface' 
         --saveBMP ((\(Surface ptr _)->ptr) surface) =<< newCString "textFont.bmp"
         --(Right img) <- readImage "textFont.bmp"
         --savePngImage "textFont.png" img

@@ -260,12 +260,12 @@ generateNetwork = do
                       expr
                     else
                       WRec (difference' (expr^.tin) (expr^.tout)) (expr^.tout) recVals expr
-              (x,(i,_)):rest@((_,(i',o')):_)->
+              (x,(i,_)):rest@((_,(i',o')):_)-> 
                 let xs = S.toList x
                     x' = WAnd  (foldl1' S.union $ map (^.tin) xs)
                                 (foldl1' S.union $ map (^.tout) xs)
                                 xs
-                    passValsF = (intersection' (e^.tin) (e^.tout)) `S.union` (intersection' i' (e^.tout)) `S.union` (S.intersection o' (e^.tout))
+                    passValsF =  (intersection' (e^.tin) (e^.tout)) `S.union` (intersection' i (e^.tout) ) `S.union` (S.intersection o' (e^.tout))
                     passValsB = ((x'^.tin) `S.difference` (e^.tout)) --`S.union` (S.filter (liftA2 (||) isDelayedSig isSig) (x'^.tin) `S.intersection` o)
                     e' = pass e passValsB
                     x'' = pass x' passValsF
@@ -346,11 +346,11 @@ generateNetwork = do
           let delayedSet = S.fromList $  map unDelay (filter isDelay entIn) ++ map unDelay sigIn
               undelayedSet = S.difference (S.map unDelay tin) delayedSet
               tin' = S.map unDelay tin
-          runIO $ do
-            print "WR start"
-            print delayedSet
-            print undelayedSet
-            print "WR End"
+          -- runIO $ do
+          --   print "WR start"
+          --   print delayedSet
+          --   print undelayedSet
+          --   print "WR End"
           dArrow <- do
             inNames <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin)
             inNames' <- mapM (\t -> (t,) <$> newName "valIn") (S.toList tin')

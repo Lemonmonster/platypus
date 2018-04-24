@@ -3,6 +3,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# Language DefaultSignatures #-}
 module Renderer where
 
 import Graphics.Rendering.OpenGL hiding (Color,Texture,get,viewport)
@@ -37,6 +39,8 @@ import Foreign.Marshal.Alloc
 import Foreign.Storable
 import Debug.Trace
 import GHC.Float
+import GHC.Generics
+import CerealPlus.Serializable
 
 shaderPath = "res/shaders/"
 materialPath = "res/materials/"
@@ -111,9 +115,14 @@ instance Show Material where
 
 data Animation = Animation{
     _rate :: Float,
-    _frames :: VG.Vector Int
-  } deriving (Eq,Ord, Show)
+    _frames :: VG.Vector Int 
+  } deriving (Eq,Ord, Show, Generic)
 makeLenses ''Animation
+
+instance Serializable m Animation where
+  serialize (Animation r f) = serialize (r,(VG.toList f))
+  deserialize = 
+    (\(r,f)-> Animation r $ VG.fromList f) <$> deserialize
 
 data Atlas = Atlas {
   _aName::String,
@@ -242,12 +251,12 @@ render r dt drawables = do
   cullFace $= Nothing
   r' <- (\ r -> return $ r & delta .~ dt) =<< foldM (flip setup) r drawables
   let (Transform centr dim o) = r'^.viewport.trans
-      mat = convertTransform (Transform (-centr) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Double)
+      mat = convertTransform (Transform (-centr*2/dim) (2/dim) (-o)) & _z._z.~ (-1/maxZ) :: V4 (V4 Double)
   proj <- toGlmatrix mat
   let r'' = r' & projection .~ Just proj
   -- gets all the resources doing loading if necessary and puts the identifier into a list
   (r''',drawablesWithRids) <- foldM (\(rout,lst) (d,ros)-> do
-            (rout',ids) <- foldM (\(rin,idlst) (RO getter) -> do
+            (rout',ids) <- foldM (\(rin,idlst) (RO getter) -> do 
                 (obj,rin') <- getter rin
                 return (rin',identifier obj : idlst)
               ) (rout,[]) ros

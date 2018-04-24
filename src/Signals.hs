@@ -30,3 +30,7 @@ instance (Show a) => Show (Create a) where
 instance Show Destroy where
   show (Dest NoEvent) = "(Dest NoEvent)"
   show (Dest (Event a))= "(Dest (Event " ++ show a ++ "))"
+
+instance (Show a) => Show ( Event a ) where
+  show (Event a) = "(Event " ++ show a ++ ")"
+  show NoEvent = "NoEvent"

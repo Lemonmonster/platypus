@@ -50,10 +50,12 @@ packages:
 extra-deps:
 - sdl2-ttf-2.0.2
 - Hipmunk-5.2.0.17
-
+- cereal-plus-0.4.2
+- vector-0.11.0.0
+- primitive-0.6.1.0
 
 ghc-options :
-  Platypus : -O2 -optc-O3 -threaded
+  Platypus : -O2 -optc-O3 -threaded -j
 # Override default flag values for local packages and extra-deps
 # flags: {}
 

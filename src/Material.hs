@@ -101,11 +101,11 @@ imageToTexture (Image w h v) =
     let  size = TextureSize2D (fromIntegral  w) (fromIntegral  h)
     tex <- genObjectName :: IO TextureObject
     textureBinding Texture2D $= Just tex
-    textureFilter Texture2D $= ( (Linear', Just Linear'), Linear')
-    textureWrapMode Texture2D S $= (Repeated,Repeat)
-    textureWrapMode Texture2D T $= (Repeated,Repeat)
+    textureFilter Texture2D $= ( (Linear', Nothing), Linear')
+    textureWrapMode Texture2D S $= (Mirrored,ClampToEdge)
+    textureWrapMode Texture2D T $= (Mirrored,ClampToEdge)
     texImage2D Texture2D NoProxy 0 RGBA' size 0 (PixelData RGBA UnsignedByte ptr)
-    generateMipmap' Texture2D
+    --generateMipmap' Texture2D
     flush
     textureBinding Texture2D $= Nothing
     return tex

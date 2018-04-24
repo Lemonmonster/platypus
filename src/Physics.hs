@@ -563,7 +563,12 @@ instance EntityW '[PhysSim] '[] (Map.Map (Maybe EntityId) (Event Collision)) '[]
 module Physics (
   module Struct,
   PhysSim,
-  Collision(..)
+  Collision(..),
+  getCollision,
+  getCollisionEvent,
+  Collisions,
+  CollisionEvents,
+  involves
 ) where
 
 import Physics.Hipmunk as Hip
@@ -588,6 +593,7 @@ import Control.Monad.State.Strict
 import Data.Ord
 import Data.List (sortBy,groupBy,partition)
 import Control.DeepSeq
+import Data.Maybe
 
 data Collision = Collision{
   objA::EntityId,
@@ -597,6 +603,10 @@ data Collision = Collision{
   normal::V2 Double,
   points:: [V2 Double ]
 } deriving (Eq,Ord,Show)
+
+involves :: EntityId -> Collision -> Bool
+involves i (Collision{objA = a, objB = b}) =
+  i == a || i == b
 
 instance Show (IORef a) where
   show = const "IORef"
@@ -948,3 +958,15 @@ instance EntityW '[PhysSim] '[] (M.Map (Maybe EntityId) [Collision]) '[] where
 instance EntityW '[PhysSim] '[] (M.Map (Maybe EntityId) (Event [Collision])) '[] where
   wire = first $ arr $ map (M.insert Nothing NoEvent . M.map (\x-> if null x then NoEvent else Event x) .
               M.mapKeysMonotonic Just . collisions) . headH
+
+
+type Collisions = M.Map (Maybe EntityId) [Collision]
+type CollisionEvents = M.Map (Maybe EntityId) (Event [Collision])
+type Bodies = M.Map EntityId Struct.Body
+type Constraints = M.Map EntityId Struct.Constraint
+
+getCollisionEvent :: EntityId -> CollisionEvents -> Event [Collision]
+getCollisionEvent id evts = fromJust $ M.lookup (Just id) evts <> M.lookup Nothing evts
+
+getCollision :: EntityId -> Collisions -> [Collision]
+getCollision id cols = fromJust $ M.lookup (Just id) cols <> M.lookup Nothing cols

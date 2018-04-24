@@ -15,10 +15,13 @@
 {-# Language AllowAmbiguousTypes #-}
 {-# Language Strict #-}
 {-# Language StrictData #-}
+{-# LANGUAGE FunctionalDependencies #-}
 module EntityUtils (
   mkObject,
   Manager,
-  managedIds
+  managedIds,
+  ObjectEntity,
+  exempt
  ) where
 
 import Entity
@@ -46,7 +49,15 @@ data ToMap = ToMap
 data SigToMap = SigToMap
 newtype Lookup a = Lookup [a]
 
+data HideId a = H
+
+newtype IdHidden a = IdH a
+
+instance (Show a) => Show (IdHidden a) where
+  show (IdH a) = "(IdH "++show a++")"
+
 type family MapType a  where
+  MapType (IdHidden a) = 3
   MapType (M.Map EntityId a) = 1
   MapType (M.Map (Maybe EntityId) a) = 2
   MapType a = 0
@@ -54,7 +65,12 @@ type family MapType a  where
 type family MapOut a where
   MapOut (M.Map EntityId a) = (M.Map (Maybe EntityId) a)
   MapOut (M.Map (Maybe EntityId) a) = (M.Map (Maybe EntityId) a)
+  MapOut (IdHidden a) = (M.Map (Maybe EntityId) [a])
   MapOut a = (M.Map (Maybe EntityId) a)
+
+type family IsList a where
+  IsList [a] = 'True
+  IsList a = 'False
 
 instance (ApplyAB' (MapType a) ToMap [a] (MapOut a),MapOut a ~ b) => ApplyAB ToMap [a] b where
   applyAB ToMap = applyAB' (Proxy :: Proxy (MapType a)) ToMap
@@ -66,21 +82,38 @@ instance (HasId a) => ApplyAB' 0 ToMap [a] (M.Map (Maybe EntityId) a) where
   applyAB' Proxy ToMap l = M.fromList $ map (\x ->(_ident x,x)) l
 
 instance ApplyAB' 1 ToMap [M.Map EntityId a] (M.Map (Maybe EntityId) a) where
-  applyAB' Proxy ToMap (m:_) = M.mapKeys Just m
+  applyAB' Proxy ToMap = M.mapKeys Just . mconcat
 
 instance ApplyAB' 2 ToMap [M.Map (Maybe EntityId) a] (M.Map (Maybe EntityId) a) where
-  applyAB' Proxy ToMap = head
+  applyAB' Proxy ToMap = mconcat
+
+instance ApplyAB' 3 ToMap [IdHidden a] (M.Map (Maybe EntityId) [a]) where
+  applyAB' Proxy ToMap l = M.fromList [(Nothing, map (\(IdH a)-> a) l)]
 
 instance ApplyAB SigToMap [Signal a] (M.Map (Maybe EntityId) a) where
   applyAB SigToMap l = M.fromList $ map (\(Signal i d) ->(i,d)) l
 
-instance (Ord a) => ApplyAB (Lookup a) (M.Map (Maybe a) b) [b] where
-  applyAB (Lookup x) m =
+class LookupList (isList :: Bool) v a b | isList v a -> b where
+  lookupTeq :: Proxy isList -> v -> a -> b
+
+instance (Ord a) => LookupList 'True (Lookup a) (M.Map (Maybe a) [b]) [b] where
+  lookupTeq _ (Lookup x) m =
+    let l = concat $ mapMaybe ((`M.lookup` m).Just) x
+    in  if null l then
+          fromJust $ m^?at Nothing ._Just
+        else
+          l
+          
+instance (Ord a) => LookupList 'False (Lookup a) (M.Map (Maybe a) b) [b] where
+  lookupTeq _ (Lookup x) m =
     let l = mapMaybe ((`M.lookup` m).Just) x
     in  if null l then
           maybeToList $ m^?at Nothing ._Just
         else
           l
+
+instance (LookupList (IsList b) (Lookup a) (M.Map (Maybe a) b) c) => ApplyAB (Lookup a) (M.Map (Maybe a) b) c where
+  applyAB = lookupTeq (Proxy :: Proxy (IsList b))
 
 
 
@@ -146,11 +179,6 @@ instance Monoid (SignalL '[]) where
   mempty = emptySignal
   mappend SNil SNil = SNil
 
-type family MapArgs (a :: [*]) where
-  MapArgs (M.Map (Maybe EntityId) a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
-  MapArgs (M.Map EntityId a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
-  MapArgs (a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
-  MapArgs '[] = '[]
 
 {-data IDTest a = IDTest {_eident::EntityId,_dat::a} deriving (Typeable)
 makeLenses 'IDTest
@@ -163,12 +191,34 @@ idTestInt = typeRep (Proxy :: Proxy (IDTest Int))
 -}
 --mapTest = hmap ToMap $ [IDTest (idTestFloat,0) (5::Float)] `ECons` [IDTest (idTestInt,0) (5::Int)] `ECons` ENil :: HList (MapArgs [IDTest Float, IDTest Int])
 
---instance SameLength' a a
 
+class ApplyABTeq (eq :: Bool) a b c where
+   applyABTeq :: (Proxy eq) -> a -> b -> c
+ 
+type family HIDOut (eq :: Bool) a where
+    HIDOut 'True a = [IdHidden a]
+    HIDOut 'False a = [a]
 
-type family UnmapArgs (a:: [*]) where
+instance (ApplyABTeq (TEq a b) (HideId a) [b] c,HIDOut (TEq a b) b ~ c) => ApplyAB (HideId a) [b] c where
+   applyAB = applyABTeq (Proxy :: Proxy (TEq a b))
+
+instance ApplyABTeq 'True (HideId b) [b] [IdHidden b] where
+   applyABTeq Proxy = const $ map IdH
+
+instance ApplyABTeq 'False (HideId a) b b where
+   applyABTeq Proxy = const id
+
+type family MapArgs (a :: [*]) where
+  MapArgs (M.Map (Maybe EntityId) a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
+  MapArgs (M.Map EntityId a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
+  MapArgs (IdHidden a ': as) = M.Map (Maybe EntityId) [a] ': MapArgs as
+  MapArgs (a ': as) = M.Map (Maybe EntityId) a ': MapArgs as
+  MapArgs '[] = '[]
+
+type family UnmapArgs (a :: [*]) where
   UnmapArgs (M.Map (Maybe EntityId) a ': as) =  [a] ':UnmapArgs as
   UnmapArgs (M.Map EntityId a ': as) =  [a] ': UnmapArgs as
+  UnmapArgs (IdHidden a ': as) = [a] ': UnmapArgs as
   UnmapArgs (a ': as) = [a] ': UnmapArgs as
   UnmapArgs '[] = '[]
 
@@ -196,6 +246,29 @@ getIds x =
                             ) >>> now >>> hold)
                           <$> mergeL evt e)
     returnA -< ents
+
+type ObjectEntity (a :: *) (b :: [*]) = Create a ': Destroy ': b
+
+type family EMap a (ls :: [*]) where
+     EMap a '[] = '[]
+     EMap a (a ': xs) = IdHidden a ': EMap a xs
+     EMap a (b ': xs) = b ': EMap a xs
+
+type family EFold (es :: [*]) (ls :: [*]) where
+     EFold '[] ls = ls
+     EFold (s ': xs) ls = EFold xs (EMap s ls)
+
+class ExemptFunc (exs :: [*]) es ss es' where
+   exempt :: Proxy exs -> (EntityL es, SignalL ss) -> (EntityL es',SignalL ss)
+
+instance ExemptFunc '[] es ss es where
+   exempt = const id
+
+instance (SameLength' es (EMap ex es),
+          HMap EntityL EntityL (HideId ex) es (EMap ex es),
+          ExemptFunc exs (EMap ex es) ss es',
+          (EFold (ex ': exs) es) ~ es') => ExemptFunc (ex ': exs) es ss es' where
+   exempt _ (es,ss) = exempt (Proxy :: Proxy exs) (hmap (H :: HideId ex) es,ss)
 
 
 mkObject :: forall s e ein sin a sout . (Typeable a, HasId a,Manager a, Monoid s,
@@ -233,6 +306,7 @@ mkObject create destroy =
               let einput = hmap (Lookup (assocIds^?!at oId._Just)) emlst :: HList (UnmapArgs ein)
                   sinput = hmap (Lookup (assocIds^?!at oId._Just)) smlst :: HList sin
               ((out,newWire),EntIndex id') <-lift $ runStateT (stepWire oWire ds (Right (einput,sinput))) (EntIndex i)
+              _2 .= id'
               _1 %= either Left (\x->fmap (\(ent,sigs) -> x <> ([ent],sigs)) out)
               return (oId,newWire)
             ) (M.toList mp') ) (Right (mempty,mempty),i)
@@ -258,3 +332,4 @@ mkObject create destroy =
                           (foldl (\mp x -> mp & at (x^?!ident) .~ Just (managedIds x) ) assocIds.(++ map snd news).fst) output
                        )
   in mkObject' 0 M.empty M.empty
+

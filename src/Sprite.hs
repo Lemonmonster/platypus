@@ -12,7 +12,7 @@ import Atlas
 import Control.Monad
 import Control.Monad.Fix
 import Data.Maybe
-import Data.Vector as V
+import qualified Data.Vector as V
 import Data.Map as Map
 import Data.Map.Lens
 import Control.Lens.At
@@ -60,6 +60,13 @@ spriteWire sprite@Sprite{_frame=fram,_animating=animatin,_frameRate=fr} =
       f <- animator sprite -< (spMod,_frameRate sprite',t)
       returnA -< ( sprite' & frame .~ f)
 
+
+spriteW :: (MonadFix m, Monad m, HasTime t s) => Sprite -> Wire s e m (PhysShape,Event Bool,Event (Sprite -> Sprite)) Sprite
+spriteW = spriteWire
+
+spriteW_ ::  (MonadFix m, Monad m, HasTime t s) => Sprite -> Wire s e m a Sprite
+spriteW_ sprite = spriteW sprite . arr (\(a,b) -> (sprite^.shape,a, b) ) . (never &&& never)
+
 instance Shaped Sprite where
   shape = sShape
 
@@ -85,7 +92,8 @@ instance Drawable Sprite where
           prog = atlas^.aMaterial.program
           (V4 r g b a ) = sprite^.tint
           anims = sprite^.animation :: String
-          (Just animationObj) = atlas^.animations.at anims
+          (Just animationObj) = atlas^.animations.at anims <|>
+                                error ("animation " ++ anims ++ " not found in atlas" ++ (sprite^.Sprite.atlas))
           fram = sprite^.frame `rem` V.length (animationObj^.frames)
           indx = animationObj ^?! frames.ix fram
       setUniform prog "uTintWeight" $ sprite^.tintWeight
@@ -99,13 +107,13 @@ instance Drawable Sprite where
   }
 
 sprite :: V2 Double -> V2 Double -> String -> String -> Sprite
-sprite pos dim animation atlas =
+sprite pos dim atlas animation =
   Sprite (OBB $ Transform pos dim 0)
           animation
           atlas
           0
           False
-          (pure 0)
+          (pure 0) 
           0
           60
           0

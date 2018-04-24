@@ -39,7 +39,10 @@ module Structures (
   toWorld,
   canRotate,
   accel,
-  toDrawables
+  toDrawables,
+  Bodied(..),
+  body,
+  stabilizeAngle
 )where
 
 import Prelude hiding ((.),id)
@@ -53,7 +56,10 @@ import Renderer
 import Data.Word
 import Data.Typeable
 import Entity
+import Data.Fixed
 import Renderer (Shaped,shape)
+
+
 
 class Poseable a where
   pos :: Lens' a (V2 Double)
@@ -94,6 +100,12 @@ data Body = Body {
   _bid :: !EntityId
 } deriving (Show,Eq,Ord,Typeable)
 makeLenses ''Body
+
+class Bodied a where
+  body :: Lens' a Body
+
+instance Bodied Body where
+  body = id
 
 accel :: Traversal' Body (V2 Double)
 accel f b@Body{_force=fr,_shapes=shps} =
@@ -157,3 +169,11 @@ instance (Poseable a, Drawable a) => ApplyAB TDO ([DrawableObject],a) [DrawableO
 
 toDrawables :: (HFoldl r TDO l [DrawableObject] [DrawableObject]) => Body -> r l -> [DrawableObject]
 toDrawables b = hFoldl (TDO b) ([] :: [DrawableObject])
+
+stabilizeAngle :: (HasTime t s,Monoid e, Monoid s,Monad m) => Double -> Double -> Double -> Wire s e m Body Body
+stabilizeAngle  ang tf sf = proc (body) -> do
+  let da = (body^.angle - ang) `mod'` (2*pi)
+      tq = (if da< pi then da else (da - 2*pi)) * (-tf)
+      body' = body & torque .~ tq
+  w <- sigIntegral -< (body'^.aVel,-(body'^.aVel * sf))
+  returnA -< body' & aVel .~ w

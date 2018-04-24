@@ -51,7 +51,7 @@ executable Platypus
   main-is:             Main.hs
 
   ghc-options:
-     -O2 -optc-O3 -threaded
+     -O2 -optc-O3 -threaded -j
   -- Modules included in this executable, other than Main.
   -- other-modules:
 
@@ -61,7 +61,7 @@ executable Platypus
   -- Other library packages from which modules are imported.
   build-depends:       base >=4.9 && <4.10,regex-compat, netwire, lens, void, template-haskell, containers,mtl,sdl2,
                        OpenGL,linear,JuicyPixels,regex-pcre,vector,split,directory,sdl2-ttf >= 2.0,deepseq,Hipmunk >=5.2.0.2,
-                       StateVar,random, transformers 
+                       StateVar,random, transformers, cereal, bytestring, cereal-plus
 
   -- Directories containing source files.
   hs-source-dirs: src

@@ -9,7 +9,7 @@
 module Graphics where
 
 import Control.Applicative
-import Control.Lens ((^.),makeLenses)
+import Control.Lens ((^.),makeLenses,(&),(.~))
 import Control.Monad
 import Data.Maybe
 import Data.Typeable
@@ -27,6 +27,7 @@ import Renderer
 import SDL.Video hiding (Renderer, viewport)
 import Shape
 import Sprite
+import Signals
 import System.Mem
 import TextBlock
 import TextBlock
@@ -73,17 +74,17 @@ data Trackable = Trackable{
     _tShape :: PhysShape
 }
 makeLenses ''Trackable
-newtype CameraEvent = Focus (Event EntityId)
-newtype Camera = Camera Transform
+newtype CameraEvent = Focus (Event EntityId) deriving (Show)
+newtype Camera = Camera Transform deriving (Eq,Ord,Show)
 
 instance EntityW '[Renderer] '[Trackable,CameraEvent] Camera '[] where
   wire = switch $ proc ([renderer] `ECons` ENil,_) -> do
     evt <- ( arr $ fmap (\startRenderer ->
          let (Transform spos sscale sorient) = startRenderer^.viewport.trans
-             spring target curr = ((target - curr)/2)**2
+             spring target curr =  (target - curr)*10
          in proc ([currRenderer] `ECons` ENil ,trackables `SCons` evts `SCons` SNil) -> do
                track <- rSwitch $ mkConst (Right Nothing) -<
-                  ((), mkConst . Right . Just <$> signalToEvent  (\(Focus id)-> Just id) const evts)
+                  ((), mkConst . Right . Just <$> signalToEvent  (\(Focus id)-> Just id) const evts )
                let (Just target) = (case track of
                                Just t -> (^.tShape.trans) <$> find (\t1 -> t1^.tid == t) (map _payload trackables)
                                Nothing -> Nothing
@@ -93,23 +94,26 @@ instance EntityW '[Renderer] '[Trackable,CameraEvent] Camera '[] where
                rec posO <- integral spos . arr (uncurry spring) . delay (spos,spos)  -< (target^.translation,posO)
                rec scaleO <- integral (sscale^._y) . arr (uncurry spring) . delay (sscale^._y,sscale^._y)  -< (target^.scale._y,scaleO)
                rec orientO <- integral sorient . arr (uncurry spring) . delay (sorient,sorient)  -< (target^.orientation,orientO)
-               returnA -< renderer  `seq` ([Camera (Transform posO (sscale ^* (scaleO/sscale^._y)) orientO)],SNil)
+               returnA -<  ([Camera (Transform posO (sscale ^* (scaleO/sscale^._y)) orientO)],SNil)
               )) . now -< renderer
     returnA -< (([],SNil),evt)
 
 
 
-instance EntityW '[Delayed Renderer, WindowSize, Window] '[DrawableObject] Renderer '[] where
-  wire = mkGen $ \s (lst `ECons` size `ECons`win `ECons` ENil,  drawables `SCons` SNil) ->
+instance EntityW '[Delayed Renderer, WindowSize, Window, Delayed Camera] '[DrawableObject] Renderer '[] where
+  wire = mkGen $ \s (lst `ECons` size `ECons`win `ECons` cam `ECons` ENil,  drawables `SCons` SNil) ->
     case (size,win) of
       ([WS (V2 w h)],[window] ) -> do
         let drawables' = map _payload drawables
         GL.clear [ColorBuffer,DepthBuffer]
         renderer <- head $ (map (return.fromDelay) lst) <|> [newRenderer 640 320]
-        renderer' <- render renderer (realToFrac $ dtime s) drawables'
+        let renderer' = case cam of
+                         [D (Camera t)] -> renderer & viewport.trans .~ t
+                         _ -> renderer
+        renderer'' <- render renderer' (realToFrac $ dtime s) drawables'
         --performGC
         glSwapWindow window
-        return (Right ([renderer'],SNil),wire )
+        return (Right ([renderer''],SNil),wire )
       _ ->
         return (Right ([],SNil),wire )
 
