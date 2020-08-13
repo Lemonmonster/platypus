@@ -9,3 +9,8 @@ unambiguous update order.  Additionally, since reactive programming can make for
 for game code.  Sadly this project did not work out.  I abandoned it due to the difficulties of debugging memory leaks in haskell that were caused by thunk chains
 building up over repeated iterations.  Additionally the structure of the types involved became increasing complex over time and reactive programming did not seem
 to be suitable for dealing with the subtleties of a physics simulation.
+
+If you want to get it running just do "stack build" in the project directory.  In order for stack to properly install 
+the dependencies you must have sdl2 and sdl2_ttf installed on the system.
+
+
