@@ -46,7 +46,7 @@ instance EntityW '[Delayed (Window,GLContext)] '[Quit] (Window,GLContext) '[] wh
       [] -> do
         initializeAll
         window <- createWindow "SDL Practice"
-                                defaultWindow{windowInitialSize = V2 2560 1280,
+                                defaultWindow{windowInitialSize = V2 1280 720,
                                               windowHighDPI = True,
                                               windowOpenGL = Just defaultOpenGL}
         gl <- glCreateContext window
