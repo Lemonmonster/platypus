@@ -16,6 +16,6 @@ the dependencies you must have sdl2 and sdl2_ttf installed on the system.
 
 ![gameplay gif](https://github.com/ajwittmond/platypus/blob/master/platypus.gif)
 
-An example of the network that is generated
+Here's an example of the network that is generated:
 
 ![network graph](https://github.com/ajwittmond/platypus/blob/master/network.pdf)
